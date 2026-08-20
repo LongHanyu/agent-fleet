@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
+import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -54,6 +55,73 @@ FINALIZER_PY = ROOT / "finalize_opencode_sessions.py"
 
 CONTAINER_PLUGIN_REL = ".config/opencode/plugins"
 CONTAINER_STATE_REL = ".opencode/state"
+CONTAINER_CONFIG_PATH = "/tmp/harbor-opencode-config.json"
+OPENCODE_API_KEY_ENV = "HARBOR_OPENCODE_API_KEY"
+
+
+def _config_content_from_command(command: str) -> str:
+    """Extract upstream's quoted JSON without executing its logging-prone command."""
+    tokens = shlex.split(command)
+    try:
+        echo_index = tokens.index("echo")
+    except ValueError as exc:
+        raise RuntimeError("unsupported OpenCode config registration command") from exc
+    if echo_index + 2 >= len(tokens) or tokens[echo_index + 2] != ">":
+        raise RuntimeError("unsupported OpenCode config registration command")
+    return tokens[echo_index + 1]
+
+
+def _optional_positive_int(value: str | None, name: str) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if not text.isdecimal() or int(text) <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return int(text)
+
+
+def _opencode_run_command(
+    *,
+    model_name: str,
+    escaped_instruction: str,
+    finalize_command: str,
+    timeout_sec: int | None,
+) -> str:
+    timeout_setup = ""
+    command_prefix = ""
+    timeout_result = ""
+    if timeout_sec is not None:
+        timeout_setup = (
+            "command -v timeout >/dev/null 2>&1 || "
+            "{ echo '[ERROR] GNU timeout is required for the configured OpenCode limit' >&2; exit 127; }; "
+            "opencode_started=$SECONDS; "
+        )
+        command_prefix = (
+            f"timeout --signal=TERM --kill-after=30s {timeout_sec}s "
+        )
+        timeout_result = (
+            "opencode_elapsed=$((SECONDS-opencode_started)); "
+            "if [ \"$opencode_rc\" -eq 124 ] || "
+            f"{{ [ \"$opencode_rc\" -eq 137 ] && [ \"$opencode_elapsed\" -ge {timeout_sec} ]; }}; then "
+            f"  printf '%s\\n' '[harbor] OpenCode wall-clock limit reached after {timeout_sec}s; grading the current workspace' "
+            "    | tee -a /logs/agent/opencode.txt; "
+            "  opencode_rc=0; "
+            "fi; "
+        )
+    return (
+        "set -o pipefail; "
+        "export PATH=\"$HOME/.local/bin:$PATH\"; "
+        ". ~/.nvm/nvm.sh 2>/dev/null || true; "
+        f"{timeout_setup}"
+        f"{command_prefix}opencode {shlex.quote(f'--model={model_name}')} "
+        "run --format=json --thinking "
+        f"--dangerously-skip-permissions -- {escaped_instruction} "
+        "2>&1 </dev/null | stdbuf -oL tee /logs/agent/opencode.txt; "
+        "opencode_rc=$?; "
+        f"{timeout_result}"
+        f"{finalize_command}"
+        "exit \"$opencode_rc\""
+    )
 
 
 def _trace_to_opik_enabled(extra_env: dict[str, str] | None = None) -> bool:
@@ -296,11 +364,24 @@ class OpikOpenCodeHarbor(OpenCode):
                     f"opencode_version={version_q}; "
                     "download_file() { "
                     "  url=\"$1\"; dest=\"$2\"; "
-                    "  if command -v curl >/dev/null 2>&1; then curl -fsSL \"$url\" -o \"$dest\"; "
-                    "  elif command -v wget >/dev/null 2>&1; then wget -qO \"$dest\" \"$url\"; "
-                    "  elif command -v python3 >/dev/null 2>&1; then python3 - <<'PY' \"$url\" \"$dest\"\n"
-                    "import sys, urllib.request\n"
-                    "urllib.request.urlretrieve(sys.argv[1], sys.argv[2])\n"
+                    "  header=\"${HARBOR_LOCAL_DOWNLOAD_HEADER:-}\"; "
+                    "  if command -v curl >/dev/null 2>&1; then "
+                    "    if [ -n \"$header\" ]; then curl -fsSL -H \"$header\" \"$url\" -o \"$dest\"; "
+                    "    else curl -fsSL \"$url\" -o \"$dest\"; fi; "
+                    "  elif command -v wget >/dev/null 2>&1; then "
+                    "    if [ -n \"$header\" ]; then wget -q --header=\"$header\" -O \"$dest\" \"$url\"; "
+                    "    else wget -qO \"$dest\" \"$url\"; fi; "
+                    "  elif command -v python3 >/dev/null 2>&1; then python3 - <<'PY' \"$url\" \"$dest\" \"$header\"\n"
+                    "import shutil, sys, urllib.request\n"
+                    "headers = {}\n"
+                    "if sys.argv[3]:\n"
+                    "    name, separator, value = sys.argv[3].partition(':')\n"
+                    "    if not separator or not name.strip():\n"
+                    "        raise ValueError('invalid download header')\n"
+                    "    headers[name.strip()] = value.strip()\n"
+                    "request = urllib.request.Request(sys.argv[1], headers=headers)\n"
+                    "with urllib.request.urlopen(request) as response, open(sys.argv[2], 'wb') as output:\n"
+                    "    shutil.copyfileobj(response, output)\n"
                     "PY\n"
                     "  else return 1; fi; "
                     "}; "
@@ -545,6 +626,9 @@ class OpikOpenCodeHarbor(OpenCode):
         # clarity.
         for key, value in self._extra_env.items():
             env[key] = value
+        api_key = os.environ.get("HARBOR_ANTHROPIC_AUTH_TOKEN", "")
+        if api_key:
+            env[OPENCODE_API_KEY_ENV] = api_key
 
         if trace_enabled:
             # Localhost OPIK_URL on the host needs to become
@@ -571,7 +655,22 @@ class OpikOpenCodeHarbor(OpenCode):
 
         config_command = self._build_register_config_command()
         if config_command:
-            await self.exec_as_agent(environment, command=config_command, env=env)
+            config_content = _config_content_from_command(config_command)
+            with tempfile.TemporaryDirectory(prefix="harbor-opencode-config-") as temp_dir:
+                config_source = Path(temp_dir) / "opencode.json"
+                config_source.write_text(config_content, encoding="utf-8")
+                await environment.upload_file(config_source, CONTAINER_CONFIG_PATH)
+            await self.exec_as_agent(
+                environment,
+                command=(
+                    "set -euo pipefail; "
+                    'config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"; '
+                    'mkdir -p "$config_dir"; '
+                    f'install -m 0600 {CONTAINER_CONFIG_PATH} '
+                    '"$config_dir/opencode.json"'
+                ),
+                env=env,
+            )
 
         if trace_enabled:
             await self.exec_as_agent(
@@ -579,9 +678,10 @@ class OpikOpenCodeHarbor(OpenCode):
                 command=(
                     "set -euo pipefail; "
                     "python3 - <<'PY'\n"
-                    "import json\n"
+                    "import json, os\n"
                     "from pathlib import Path\n"
-                    "cfg_path = Path.home() / '.config/opencode/opencode.json'\n"
+                    "config_root = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config'))\n"
+                    "cfg_path = config_root / 'opencode/opencode.json'\n"
                     "plugin_path = str(Path.home() / '.config/opencode/plugins/opik-trace.ts')\n"
                     "data = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}\n"
                     "plugins = data.get('plugin')\n"
@@ -604,21 +704,18 @@ class OpikOpenCodeHarbor(OpenCode):
                 ">>/logs/agent/opencode.txt 2>&1 || true; "
             )
 
+        run_timeout = _optional_positive_int(
+            os.environ.get("HARBOR_OPENCODE_RUN_TIMEOUT_SEC"),
+            "HARBOR_OPENCODE_RUN_TIMEOUT_SEC",
+        )
+
         await self.exec_as_agent(
             environment,
-            command=(
-                "set -o pipefail; "
-                "export PATH=\"$HOME/.local/bin:$PATH\"; "
-                ". ~/.nvm/nvm.sh 2>/dev/null || true; "
-                f"opencode --model={self.model_name} run --format=json --thinking "
-                f"--dangerously-skip-permissions -- {escaped_instruction} "
-                f"2>&1 </dev/null | stdbuf -oL tee /logs/agent/opencode.txt; "
-                # opencode does not consistently emit a terminal plugin event
-                # under Harbor. Keep finalization best-effort, but return the
-                # original opencode status so Harbor retries/accounting still work.
-                "opencode_rc=$?; "
-                f"{finalize_command}"
-                "exit \"$opencode_rc\""
+            command=_opencode_run_command(
+                model_name=self.model_name,
+                escaped_instruction=escaped_instruction,
+                finalize_command=finalize_command,
+                timeout_sec=run_timeout,
             ),
             env=env,
         )

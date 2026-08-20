@@ -57,7 +57,6 @@ def model_request_headers() -> dict[str, str]:
 
 def build_opencode_config() -> dict[str, object]:
     base_url = os.environ.get("HARBOR_ANTHROPIC_BASE_URL", "").rstrip("/") + "/v1"
-    api_key = os.environ.get("HARBOR_ANTHROPIC_AUTH_TOKEN", "")
     provider, separator, model = os.environ.get("HARBOR_MODEL", "").partition("/")
     if not separator:
         model = provider
@@ -81,7 +80,9 @@ def build_opencode_config() -> dict[str, object]:
 
     if provider == "custom":
         provider_config.setdefault("npm", "@ai-sdk/openai-compatible")
-        options.setdefault("apiKey", api_key)
+        # Keep credentials out of Harbor CLI args and persisted trial config.
+        # The custom agent forwards this variable only to the Sandbox process.
+        options.setdefault("apiKey", "{env:HARBOR_OPENCODE_API_KEY}")
         model_config = provider_config.setdefault("models", {}).setdefault(model, {})
         model_config.setdefault("name", model)
     elif max_tokens:

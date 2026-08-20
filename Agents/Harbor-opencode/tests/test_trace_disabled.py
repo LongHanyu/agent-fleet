@@ -30,11 +30,13 @@ class FakeOpenCode:
         model_name: str | None = None,
         extra_env: dict[str, str] | None = None,
         fake_opencode_present: bool = True,
+        fake_config_content: str | None = None,
         **kwargs,
     ) -> None:
         self.model_name = model_name
         self._extra_env = extra_env or {}
         self.fake_opencode_present = fake_opencode_present
+        self.fake_config_content = fake_config_content
         self.root_commands: list[dict[str, object]] = []
         self.agent_commands: list[dict[str, object]] = []
 
@@ -51,17 +53,24 @@ class FakeOpenCode:
         return None
 
     def _build_register_config_command(self):
-        return None
+        if self.fake_config_content is None:
+            return None
+        return (
+            "mkdir -p ~/.config/opencode && echo "
+            f"{self.fake_config_content!r} > ~/.config/opencode/opencode.json"
+        )
 
 
 class FakeEnvironment:
     def __init__(self) -> None:
         self.uploads: list[tuple[Path, str]] = []
+        self.uploaded_contents: dict[str, str] = {}
 
     async def upload_file(self, source: Path, destination: str) -> None:
         self.uploads.append((source, destination))
         if not source.is_file():
             raise FileNotFoundError(source)
+        self.uploaded_contents[destination] = source.read_text(encoding="utf-8")
 
 
 def make_harbor_stubs() -> dict[str, types.ModuleType]:
@@ -120,6 +129,7 @@ class OpenCodeTraceDisabledTests(unittest.TestCase):
                     "https://registry.npmmirror.com/-/binary/node/"
                     "v22.14.0/node-v22.14.0-linux-x64.tar.gz"
                 ),
+                "HARBOR_LOCAL_DOWNLOAD_HEADER": "X-Backend: 127.0.0.1:18765",
                 "NPM_CONFIG_REGISTRY": "https://registry.npmmirror.com",
                 "OPIK_URL": "http://localhost:5173",
                 "OPIK_URL_OVERRIDE": "http://localhost:5173/api",
@@ -166,6 +176,8 @@ class OpenCodeTraceDisabledTests(unittest.TestCase):
             'if extract_archive "$node_dist_tgz" "$node_dir"; then',
             install_command,
         )
+        self.assertIn('curl -fsSL -H "$header"', install_command)
+        self.assertIn('wget -q --header="$header"', install_command)
         self.assertLess(
             install_command.index("CC_NODE_DIST_URL"),
             install_command.index("apt-get update"),
@@ -228,6 +240,39 @@ class OpenCodeTraceDisabledTests(unittest.TestCase):
             agent.agent_commands[-1].get("env", {}),
         )
 
+    def test_run_uploads_config_without_logging_secret(self) -> None:
+        secret = "secret-api-key"
+        agent = self.module.OpikOpenCodeHarbor(
+            logs_dir=Path("/tmp/test-opencode-logs"),
+            model_name="custom/test-model",
+            extra_env={"TRACE_TO_OPIK": "false"},
+            fake_config_content=f'{{"apiKey":"{secret}"}}',
+        )
+        environment = FakeEnvironment()
+
+        with mock.patch.dict(
+            os.environ,
+            {"HARBOR_ANTHROPIC_AUTH_TOKEN": secret},
+            clear=False,
+        ):
+            asyncio.run(agent.run("solve the task", environment, object()))
+
+        config_path = self.module.CONTAINER_CONFIG_PATH
+        self.assertEqual(
+            environment.uploaded_contents[config_path],
+            f'{{"apiKey":"{secret}"}}',
+        )
+        commands = "\n".join(
+            str(item.get("command", "")) for item in agent.agent_commands
+        )
+        self.assertNotIn(secret, commands)
+        self.assertIn(config_path, commands)
+        self.assertIn('${XDG_CONFIG_HOME:-$HOME/.config}/opencode', commands)
+        self.assertEqual(
+            agent.agent_commands[-1]["env"][self.module.OPENCODE_API_KEY_ENV],
+            secret,
+        )
+
     def test_run_trace_on_keeps_plugin_registration_and_finalizer(self) -> None:
         agent = self.make_agent("true")
 
@@ -238,12 +283,49 @@ class OpenCodeTraceDisabledTests(unittest.TestCase):
         )
         self.assertIn("opik-trace.ts", commands)
         self.assertIn("finalize_opencode_sessions.py", commands)
+        self.assertIn("XDG_CONFIG_HOME", commands)
         run_env = agent.agent_commands[-1].get("env", {})
         self.assertEqual(run_env.get("OC_OPIK_LOGS_DIR"), "/logs/agent")
         self.assertEqual(
             run_env.get("OPIK_URL"),
             "http://host.docker.internal:5173/api/",
         )
+
+    def test_run_applies_controlled_wall_clock_limit(self) -> None:
+        agent = self.make_agent("false")
+
+        with mock.patch.dict(
+            os.environ,
+            {"HARBOR_OPENCODE_RUN_TIMEOUT_SEC": "900"},
+            clear=False,
+        ):
+            asyncio.run(agent.run("solve the task", FakeEnvironment(), object()))
+
+        command = str(agent.agent_commands[-1]["command"])
+        self.assertIn("timeout --signal=TERM --kill-after=30s 900s opencode", command)
+        self.assertIn("OpenCode wall-clock limit reached after 900s", command)
+        self.assertIn('opencode_rc=0', command)
+        bash_check = subprocess.run(
+            ["bash", "-n"],
+            input=command,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
+
+    def test_run_rejects_invalid_wall_clock_limit(self) -> None:
+        agent = self.make_agent("false")
+
+        with mock.patch.dict(
+            os.environ,
+            {"HARBOR_OPENCODE_RUN_TIMEOUT_SEC": "0"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                asyncio.run(
+                    agent.run("solve the task", FakeEnvironment(), object())
+                )
 
 
 class EnableTrackHarborTests(unittest.TestCase):

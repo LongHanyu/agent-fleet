@@ -17,6 +17,7 @@ class HarborGenerationConfigTests(unittest.TestCase):
                 "PATH": os.environ["PATH"],
                 "HOME": temp_dir,
                 "AGENT": agent,
+                "ROLLOUT": "0",
                 "MODEL": "test-model",
                 "BASE_URL": "https://llm.example",
                 "API_KEY": "fake-key",
@@ -44,6 +45,7 @@ class HarborGenerationConfigTests(unittest.TestCase):
                 "PATH": os.environ["PATH"],
                 "HOME": temp_dir,
                 "AGENT": agent,
+                "ROLLOUT": "0",
                 "MODEL": "test-model",
                 "BASE_URL": "https://llm.example",
                 "API_KEY": "fake-key",
@@ -130,6 +132,12 @@ PY
             ]["output"],
             8192,
         )
+        custom_options = config["opencode_config"]["provider"]["custom"]["options"]
+        self.assertEqual(
+            custom_options["apiKey"],
+            "{env:HARBOR_OPENCODE_API_KEY}",
+        )
+        self.assertNotIn("fake-key", json.dumps(config["opencode_config"]))
 
     def test_opencode_applies_settings_to_named_provider_model(self) -> None:
         config = self._load_config(
