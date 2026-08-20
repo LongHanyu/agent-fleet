@@ -16,7 +16,6 @@ import os
 import re
 import shlex
 import stat
-import subprocess
 import tarfile
 import tempfile
 import time
@@ -185,6 +184,23 @@ def _image_ref_of(data: Any) -> str:
     return str(getattr(getattr(data, "Image", None), "Ref", "") or "").strip()
 
 
+def _host_routable_proxy_url(proxy_url: str) -> str:
+    parsed = urlsplit(proxy_url)
+    if parsed.hostname != "sandbox.yicloud.com.cn":
+        return proxy_url
+    origin = os.environ.get(
+        "YICLOUD_SANDBOX_PROXY_ORIGIN",
+        "https://gate.yicloud.com.cn/sandbox-connect",
+    ).strip()
+    target = urlsplit(origin)
+    if target.scheme not in {"http", "https"} or not target.netloc:
+        raise ValueError(
+            "YICLOUD_SANDBOX_PROXY_ORIGIN must be an HTTP(S) origin"
+        )
+    path = f"{target.path.rstrip('/')}/{parsed.path.lstrip('/')}"
+    return urlunsplit((target.scheme, target.netloc, path, parsed.query, ""))
+
+
 def _environment_id_by_exact_name(
     sandbox: Any, project_name: str, environment_name: str
 ) -> str:
@@ -247,6 +263,7 @@ def _command_url_of(data: Any) -> str:
         proxy_url = str(getattr(endpoint, "ProxyUrl", "") or "")
         if not proxy_url.startswith(("http://", "https://")):
             continue
+        proxy_url = _host_routable_proxy_url(proxy_url)
         parsed = urlsplit(proxy_url)
         path = parsed.path.rstrip("/")
         path = path.removesuffix("/ping")
@@ -826,111 +843,6 @@ class YiCloudOpenSandboxEnvironment(BaseEnvironment):
                 f"status={response.status_code} body={response.text[:1000]!r}"
             )
 
-    def _fast_upload_url(self) -> str:
-        origin = os.environ.get(
-            "YICLOUD_SANDBOX_FAST_UPLOAD_ORIGIN",
-            "https://sandbox.yicloud.com.cn",
-        ).strip()
-        if not origin:
-            return ""
-        if not self._sandbox_id:
-            raise RuntimeError("YiCloud Sandbox is not running")
-        parsed = urlsplit(origin)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError(
-                "YICLOUD_SANDBOX_FAST_UPLOAD_ORIGIN must be an HTTP(S) origin"
-            )
-        return (
-            f"{origin.rstrip('/')}/sandboxes/{self._sandbox_id}"
-            "/proxy/44772/files/upload"
-        )
-
-    def _upload_file_fast_sync(
-        self,
-        source: Path,
-        target_path: str,
-        upload_url: str,
-    ) -> None:
-        timeout_sec = _positive_int(
-            os.environ.get("YICLOUD_SANDBOX_UPLOAD_TIMEOUT_SEC", "1800"),
-            "YICLOUD_SANDBOX_UPLOAD_TIMEOUT_SEC",
-        )
-        metadata_payload = {
-            "path": target_path,
-            "owner": "root",
-            "group": "root",
-            "mode": int(f"{stat.S_IMODE(source.stat().st_mode):o}"),
-        }
-        started = time.monotonic()
-        with tempfile.TemporaryDirectory(prefix="yicloud-fast-upload-") as tmp:
-            tmp_dir = Path(tmp)
-            metadata = tmp_dir / "metadata.json"
-            headers = tmp_dir / "headers.txt"
-            response_body = tmp_dir / "response.txt"
-            metadata.write_text(
-                json.dumps(metadata_payload, separators=(",", ":")),
-                encoding="utf-8",
-            )
-            headers.write_text(
-                f"X-Sandbox-Access-Token: {self._access_token}\n",
-                encoding="utf-8",
-            )
-            headers.chmod(0o600)
-            completed = subprocess.run(
-                [
-                    "curl",
-                    "--noproxy",
-                    "*",
-                    "--silent",
-                    "--show-error",
-                    "--connect-timeout",
-                    "20",
-                    "--max-time",
-                    str(timeout_sec),
-                    "--request",
-                    "POST",
-                    upload_url,
-                    "--header",
-                    f"@{headers}",
-                    "--form",
-                    (
-                        f"metadata=@{metadata};type=application/json;"
-                        "filename=metadata.json"
-                    ),
-                    "--form",
-                    f"file=@{source};filename={source.name}",
-                    "--output",
-                    str(response_body),
-                    "--write-out",
-                    "%{http_code}",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=timeout_sec + 30,
-                check=False,
-            )
-            status_text = completed.stdout.strip()
-            status = int(status_text) if status_text.isdigit() else 0
-            if completed.returncode != 0 or not 200 <= status < 300:
-                body = response_body.read_text(
-                    encoding="utf-8", errors="replace"
-                )[:1000]
-                raise RuntimeError(
-                    "YiCloud fast file upload failed "
-                    f"curl_rc={completed.returncode} status={status} "
-                    f"stderr={completed.stderr.strip()[:1000]!r} body={body!r}"
-                )
-        elapsed = max(time.monotonic() - started, 0.001)
-        size = source.stat().st_size
-        self.logger.info(
-            "YiCloud fast upload complete path=%s size_bytes=%s "
-            "elapsed_seconds=%.3f speed_mib_per_second=%.2f",
-            target_path,
-            size,
-            elapsed,
-            size / elapsed / 1024 / 1024,
-        )
-
     def _run_command_sync(
         self,
         command: str,
@@ -1079,22 +991,13 @@ class YiCloudOpenSandboxEnvironment(BaseEnvironment):
                     "task image only has bash, but the minimal S3 downloader "
                     "requires an HTTP signed URL"
                 )
-            upload_url = self._fast_upload_url()
-            if not upload_url:
-                raise RuntimeError(
-                    "task image needs the minimal S3 downloader, but "
-                    "YICLOUD_SANDBOX_FAST_UPLOAD_ORIGIN is disabled"
-                )
             with tempfile.TemporaryDirectory(
                 prefix="yicloud-s3-bootstrap-"
             ) as tmp:
                 source = Path(tmp) / "http-get.sh"
                 source.write_text(S3_HTTP_BOOTSTRAP, encoding="utf-8")
-                await asyncio.to_thread(
-                    self._upload_file_fast_sync,
-                    source,
-                    S3_HTTP_BOOTSTRAP_PATH,
-                    upload_url,
+                await self._upload_file_via_execd(
+                    source, S3_HTTP_BOOTSTRAP_PATH
                 )
             prepared = await self.exec(
                 f"chmod 700 {shlex.quote(S3_HTTP_BOOTSTRAP_PATH)}",
@@ -1205,29 +1108,11 @@ class YiCloudOpenSandboxEnvironment(BaseEnvironment):
                 f"stderr={getattr(result, 'stderr', '')!r}"
             )
 
-    async def upload_file(self, source_path: Path | str, target_path: str) -> None:
-        source = Path(source_path)
-        if not source.is_file():
-            raise RuntimeError(f"upload source is not a file: {source}")
+    async def _upload_file_via_execd(
+        self, source: Path, target_path: str
+    ) -> None:
         mode = f"{stat.S_IMODE(source.stat().st_mode):o}"
-        if self._uses_s3_upload():
-            started = time.monotonic()
-            artifact = await asyncio.to_thread(
-                self._s3_store().stage_file, source
-            )
-            await self._materialize_s3_file(artifact, target_path, mode)
-            elapsed = max(time.monotonic() - started, 0.001)
-            self.logger.info(
-                "YiCloud upload complete backend=s3 kind=file "
-                "target=%s digest=%s size_bytes=%s elapsed_seconds=%.3f",
-                target_path,
-                artifact.logical_digest,
-                artifact.payload_size,
-                elapsed,
-            )
-            return
         parent = str(Path(target_path).parent)
-        fast_upload_url = self._fast_upload_url()
         remote_chunk = f"/tmp/harbor-upload-{time.time_ns()}.chunk"
         prepare = await self.exec(
             f"mkdir -p {shlex.quote(parent)} && : > {shlex.quote(target_path)}",
@@ -1237,14 +1122,6 @@ class YiCloudOpenSandboxEnvironment(BaseEnvironment):
         )
         if prepare.return_code != 0:
             raise RuntimeError(f"failed to prepare upload target {target_path!r}")
-        if fast_upload_url:
-            await asyncio.to_thread(
-                self._upload_file_fast_sync,
-                source,
-                target_path,
-                fast_upload_url,
-            )
-            return
         handle = None
         try:
             handle = await asyncio.to_thread(source.open, "rb")
@@ -1290,6 +1167,29 @@ class YiCloudOpenSandboxEnvironment(BaseEnvironment):
                 f"failed to preserve upload mode for {target_path!r}: "
                 f"{finalize.stderr}"
             )
+
+    async def upload_file(self, source_path: Path | str, target_path: str) -> None:
+        source = Path(source_path)
+        if not source.is_file():
+            raise RuntimeError(f"upload source is not a file: {source}")
+        if self._uses_s3_upload():
+            started = time.monotonic()
+            artifact = await asyncio.to_thread(
+                self._s3_store().stage_file, source
+            )
+            mode = f"{stat.S_IMODE(source.stat().st_mode):o}"
+            await self._materialize_s3_file(artifact, target_path, mode)
+            elapsed = max(time.monotonic() - started, 0.001)
+            self.logger.info(
+                "YiCloud upload complete backend=s3 kind=file "
+                "target=%s digest=%s size_bytes=%s elapsed_seconds=%.3f",
+                target_path,
+                artifact.logical_digest,
+                artifact.payload_size,
+                elapsed,
+            )
+            return
+        await self._upload_file_via_execd(source, target_path)
 
     async def upload_dir(self, source_dir: Path | str, target_dir: str) -> None:
         source = Path(source_dir)

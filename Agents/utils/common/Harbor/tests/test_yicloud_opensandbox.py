@@ -85,6 +85,57 @@ class FakeSandbox:
 
 
 class YiCloudOpenSandboxTest(unittest.TestCase):
+    def test_command_url_rewrites_legacy_proxy_to_gate(self) -> None:
+        endpoint = SimpleNamespace(
+            ProxyUrl=(
+                "https://sandbox.yicloud.com.cn/v1/sandboxes/sbx-test/"
+                "proxy/44772/ping?token=value"
+            )
+        )
+        data = SimpleNamespace(
+            Endpoints=SimpleNamespace(Endpoints={"44772": endpoint})
+        )
+
+        self.assertEqual(
+            yicloud_opensandbox._command_url_of(data),
+            "https://gate.yicloud.com.cn/sandbox-connect/v1/sandboxes/"
+            "sbx-test/proxy/44772/command?token=value",
+        )
+
+    def test_command_url_honors_proxy_origin_override(self) -> None:
+        endpoint = SimpleNamespace(
+            ProxyUrl=(
+                "https://sandbox.yicloud.com.cn/v1/sandboxes/sbx-test/"
+                "proxy/44772/ping"
+            )
+        )
+        data = SimpleNamespace(
+            Endpoints=SimpleNamespace(Endpoints={"44772": endpoint})
+        )
+
+        with patch.dict(
+            "os.environ",
+            {"YICLOUD_SANDBOX_PROXY_ORIGIN": "https://gate.example/connect"},
+        ):
+            self.assertEqual(
+                yicloud_opensandbox._command_url_of(data),
+                "https://gate.example/connect/v1/sandboxes/sbx-test/"
+                "proxy/44772/command",
+            )
+
+    def test_command_url_keeps_nonlegacy_proxy_origin(self) -> None:
+        endpoint = SimpleNamespace(
+            ProxyUrl="https://already-routable.example/proxy/44772/ping"
+        )
+        data = SimpleNamespace(
+            Endpoints=SimpleNamespace(Endpoints={"44772": endpoint})
+        )
+
+        self.assertEqual(
+            yicloud_opensandbox._command_url_of(data),
+            "https://already-routable.example/proxy/44772/command",
+        )
+
     def test_s3_download_url_is_passed_as_environment_not_command_text(self) -> None:
         instance = object.__new__(
             yicloud_opensandbox.YiCloudOpenSandboxEnvironment
@@ -144,12 +195,12 @@ class YiCloudOpenSandboxTest(unittest.TestCase):
         )
         uploaded = {}
 
-        def capture_upload(source, target_path, _upload_url):
+        def capture_upload(source, target_path):
             uploaded["count"] = uploaded.get("count", 0) + 1
             uploaded["payload"] = source.read_bytes()
             uploaded["target_path"] = target_path
 
-        instance._upload_file_fast_sync = capture_upload
+        instance._upload_file_via_execd = AsyncMock(side_effect=capture_upload)
 
         async def ensure_twice() -> None:
             signed_url = "http://ceph.example/cache/object?signature=test"
@@ -379,61 +430,11 @@ class YiCloudOpenSandboxTest(unittest.TestCase):
         self.assertNotIn("cwd", captured["payload"])
         self.assertEqual(result.return_code, 1)
 
-    def test_fast_upload_keeps_access_token_out_of_argv(self) -> None:
-        instance = object.__new__(
-            yicloud_opensandbox.YiCloudOpenSandboxEnvironment
-        )
-        instance._sandbox_id = "sbx-test"
-        instance._access_token = "secret-sandbox-token"
-        instance.logger = Mock()
-        captured = {}
-
-        def fake_run(command, **_kwargs):
-            captured["command"] = command
-            header_path = Path(command[command.index("--header") + 1][1:])
-            captured["headers"] = header_path.read_text(encoding="utf-8")
-            metadata_form = next(
-                value
-                for value in command
-                if value.startswith("metadata=@")
-            )
-            metadata_path = Path(
-                metadata_form.removeprefix("metadata=@").split(";", 1)[0]
-            )
-            captured["metadata"] = json.loads(metadata_path.read_text())
-            return SimpleNamespace(returncode=0, stdout="200", stderr="")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "agent.tgz"
-            source.write_bytes(b"agent-package")
-            source.chmod(0o755)
-            with patch.object(
-                yicloud_opensandbox.subprocess,
-                "run",
-                side_effect=fake_run,
-            ):
-                instance._upload_file_fast_sync(
-                    source,
-                    "/opt/tb-opik/agent.tgz",
-                    instance._fast_upload_url(),
-                )
-
-        self.assertNotIn(
-            "secret-sandbox-token",
-            " ".join(captured["command"]),
-        )
-        self.assertIn(
-            "X-Sandbox-Access-Token: secret-sandbox-token",
-            captured["headers"],
-        )
-        self.assertEqual(captured["metadata"]["mode"], 755)
-
     def test_chunked_upload_restores_source_mode(self) -> None:
         instance = object.__new__(
             yicloud_opensandbox.YiCloudOpenSandboxEnvironment
         )
         instance._uses_s3_upload = Mock(return_value=False)
-        instance._fast_upload_url = Mock(return_value="")
         instance._upload_chunk_sync = Mock()
         instance.exec = AsyncMock(
             return_value=SimpleNamespace(return_code=0, stdout="", stderr="")
@@ -455,6 +456,31 @@ class YiCloudOpenSandboxTest(unittest.TestCase):
 
         commands = [call.args[0] for call in instance.exec.await_args_list]
         self.assertIn("chmod 755 /opt/tools/tool", commands)
+
+    def test_upload_splits_files_at_gateway_limit(self) -> None:
+        instance = object.__new__(
+            yicloud_opensandbox.YiCloudOpenSandboxEnvironment
+        )
+        instance._uses_s3_upload = Mock(return_value=False)
+        instance._upload_chunk_sync = Mock()
+        instance.exec = AsyncMock(
+            return_value=SimpleNamespace(return_code=0, stdout="", stderr="")
+        )
+
+        async def run_inline(function, *args):
+            return function(*args)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "large.tar.gz"
+            source.write_bytes(b"x" * (yicloud_opensandbox.UPLOAD_CHUNK_BYTES + 1))
+            with patch.object(
+                yicloud_opensandbox.asyncio,
+                "to_thread",
+                side_effect=run_inline,
+            ):
+                asyncio.run(instance.upload_file(source, "/opt/large.tar.gz"))
+
+        self.assertEqual(instance._upload_chunk_sync.call_count, 2)
 
     def test_execd_upload_uses_binary_multipart_metadata(self) -> None:
         instance = object.__new__(
