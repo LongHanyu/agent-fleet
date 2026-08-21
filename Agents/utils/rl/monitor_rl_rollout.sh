@@ -105,5 +105,5 @@ while true; do
   echo "recent results:"
   recent_results
 
-  sleep 2
+  sleep "${RL_MONITOR_INTERVAL_SEC:-2}"
 done

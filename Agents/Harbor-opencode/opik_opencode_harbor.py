@@ -207,7 +207,7 @@ class OpikOpenCodeHarbor(OpenCode):
                     # is missing. Treat Python as present only if it executes.
                     "if command -v python3 >/dev/null 2>&1 && python3 - <<'PY' >/dev/null 2>&1\n"
                     "import sys\n"
-                    "print(sys.version)\n"
+                    "raise SystemExit(0 if sys.version_info >= (3, 9) else 1)\n"
                     "PY\n"
                     "then exit 0; fi; "
                     "if [ -f \"$wheel_dir/python3.12-runtime.tar.gz\" ] && command -v tar >/dev/null 2>&1; then "
@@ -217,7 +217,7 @@ class OpikOpenCodeHarbor(OpenCode):
                     "  if [ -x /opt/python3.12-runtime/bin/python3.12 ] "
                     "    && /opt/python3.12-runtime/bin/python3.12 - <<'PY' >/dev/null 2>&1\n"
                     "import sys\n"
-                    "print(sys.version)\n"
+                    "raise SystemExit(0 if sys.version_info >= (3, 9) else 1)\n"
                     "PY\n"
                     "  then "
                     # Do not symlink the cached wrapper. It derives runtime
@@ -247,14 +247,14 @@ class OpikOpenCodeHarbor(OpenCode):
                     # wrappers by pointing python3 at the package-manager copy.
                     "if [ -x /usr/bin/python3 ] && /usr/bin/python3 - <<'PY' >/dev/null 2>&1\n"
                     "import sys\n"
-                    "print(sys.version)\n"
+                    "raise SystemExit(0 if sys.version_info >= (3, 9) else 1)\n"
                     "PY\n"
                     "then ln -sf /usr/bin/python3 /usr/local/bin/python3; fi; "
                     # The realtime plugin spawns `python3` with stderr hidden.
                     # Fail install here instead of losing all opencode traces.
                     "python3 - <<'PY' >/dev/null\n"
                     "import sys\n"
-                    "print(sys.version)\n"
+                    "raise SystemExit(0 if sys.version_info >= (3, 9) else 1)\n"
                     "PY\n"
                 ),
                 env={"DEBIAN_FRONTEND": "noninteractive"},
@@ -315,6 +315,11 @@ class OpikOpenCodeHarbor(OpenCode):
                     "PY\n"
                     "  else return 1; fi; "
                     "}; "
+                    "node_runtime_ready() { "
+                    "  command -v node >/dev/null 2>&1 "
+                    "    && command -v npm >/dev/null 2>&1 "
+                    "    && node -e 'process.exit(Number(process.versions.node.split(\".\")[0]) >= 18 ? 0 : 1)' >/dev/null 2>&1; "
+                    "}; "
                     "wheel_dir=\"${CC_OPIK_PY_WHEEL_DIR:-/opt/tb-opik/python-wheels}\"; "
                     "wheel_url=\"${HARBOR_LOCAL_WHEEL_SERVER_URL:-}\"; "
                     "node_tgz=\"$wheel_dir/node-runtime.tar.xz\"; "
@@ -345,7 +350,7 @@ class OpikOpenCodeHarbor(OpenCode):
                     "  if [ -s \"$tmp_platform_tgz\" ]; then opencode_linux_x64_tgz=\"$tmp_platform_tgz\"; fi; "
                     "fi; "
                     "mkdir -p \"$HOME/.local/bin\"; "
-                    "if ! command -v npm >/dev/null 2>&1 && [ -f \"$node_tgz\" ]; then "
+                    "if ! node_runtime_ready && [ -f \"$node_tgz\" ]; then "
                     "  node_dir=\"$(mktemp -d /tmp/tb-node-XXXXXX)\"; "
                     "  extract_archive \"$node_tgz\" \"$node_dir\"; "
                     "  node_bin=\"$(find \"$node_dir\" -path '*/bin/npm' -print -quit 2>/dev/null)\"; "
@@ -360,7 +365,7 @@ class OpikOpenCodeHarbor(OpenCode):
                     "fi; "
                     # qz has no mount or route back to the runner. Use the same
                     # sandbox-reachable Node dist mirror as Claude Code.
-                    "if ! command -v npm >/dev/null 2>&1 && [ -n \"${CC_NODE_DIST_URL:-}\" ]; then "
+                    "if ! node_runtime_ready && [ -n \"${CC_NODE_DIST_URL:-}\" ]; then "
                     "  node_dist_tgz=\"$(mktemp /tmp/tb-node-dist-XXXXXX.tgz)\"; "
                     "  if download_file \"$CC_NODE_DIST_URL\" \"$node_dist_tgz\" "
                     "    && [ -s \"$node_dist_tgz\" ]; then "
@@ -377,11 +382,12 @@ class OpikOpenCodeHarbor(OpenCode):
                     "    fi; "
                     "  fi; "
                     "fi; "
-                    "if ! command -v npm >/dev/null 2>&1; then "
+                    "if ! node_runtime_ready; then "
                     "  if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y nodejs npm; "
                     "  elif command -v apk >/dev/null 2>&1; then apk add --no-cache nodejs npm; "
                     "  elif command -v yum >/dev/null 2>&1; then yum install -y nodejs npm; fi; "
                     "fi; "
+                    "node_runtime_ready || { echo '[ERROR] Node.js >=18 with npm is required' >&2; exit 1; }; "
                     "npm config set prefix \"$HOME/.local\" >/dev/null 2>&1 || true; "
                     "use_linux_x64_platform=0; "
                     # Only use the cached glibc x64 binary on matching images.
@@ -537,6 +543,12 @@ class OpikOpenCodeHarbor(OpenCode):
         if not self.model_name:
             raise ValueError("Model name must not be empty")
 
+        run_timeout_sec = int(
+            os.environ.get("HARBOR_OPENCODE_RUN_TIMEOUT_SEC", "1800")
+        )
+        if run_timeout_sec <= 0:
+            raise ValueError("HARBOR_OPENCODE_RUN_TIMEOUT_SEC must be positive")
+
         env: dict[str, str] = {}
 
         # Replace upstream's provider-specific env handling with explicit
@@ -621,4 +633,5 @@ class OpikOpenCodeHarbor(OpenCode):
                 "exit \"$opencode_rc\""
             ),
             env=env,
+            timeout_sec=run_timeout_sec,
         )

@@ -75,6 +75,7 @@ run_dry() {
     HARBOR_ENVIRONMENT_TYPE="$environment_type" \
     HARBOR_OPENSANDBOX_IMAGE_REF="$image_ref" \
     HARBOR_OPENSANDBOX_IMAGE_REPOSITORY=test-project/test-repository \
+    HARBOR_OPENSANDBOX_SANDBOX_IMAGE_PREFIX=test-project/test-repository \
     HARBOR_OPENSANDBOX_IMAGE_MANAGER="$manager" \
     HARBOR_OPIK_BIN="$tmp/bin/fake-harbor" \
     HARBOR_CLI_BIN="$tmp/bin/fake-harbor" \
@@ -138,6 +139,16 @@ manual="$(run_dry 'test-project/manual:immutable' "$tmp/does-not-exist.py")"
 grep -F -- '--ek image_ref=test-project/manual:immutable' <<< "$manual" >/dev/null
 if grep -F -- '[INFO] preparing OpenSandbox image' <<< "$manual" >/dev/null; then
   echo 'manual image override unexpectedly invoked the image manager' >&2
+  exit 1
+fi
+
+printf '[environment]\nbuild_timeout_sec = 60\ndocker_image = "harbor-sandbox.example/tasks:prebuilt"\n' \
+  > "$tmp/dataset/0/task.toml"
+task_prebuilt="$(run_dry '' "$HARBOR_DIR/opensandbox_image_manager.py")"
+grep -F -- '--ek image_ref=harbor-sandbox.example/tasks:prebuilt' \
+  <<< "$task_prebuilt" >/dev/null
+if grep -F -- '[INFO] preparing OpenSandbox image' <<< "$task_prebuilt" >/dev/null; then
+  echo 'task prebuilt image unexpectedly invoked the image manager' >&2
   exit 1
 fi
 
