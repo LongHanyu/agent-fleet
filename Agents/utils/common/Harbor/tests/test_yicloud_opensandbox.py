@@ -867,6 +867,22 @@ class YiCloudOpenSandboxTest(unittest.TestCase):
             artifact.signed_url,
         )
 
+    def test_s3_download_command_rejects_empty_downloader_commands(self) -> None:
+        instance = object.__new__(
+            yicloud_opensandbox.YiCloudOpenSandboxEnvironment
+        )
+        instance._s3_download_timeout_sec = 1800
+        artifact = SimpleNamespace(payload_size=12, payload_digest="b" * 64)
+
+        command = instance._s3_download_command(
+            artifact,
+            "/opt/tb-opik/agent.tgz.tmp",
+        )
+
+        self.assertIn('[ -s "$harbor_command_path" ]', command)
+        self.assertIn("produced no file", command)
+        self.assertIn("exit 49", command)
+
     def test_s3_bootstrap_is_uploaded_once_only_when_native_tools_are_missing(
         self,
     ) -> None:
@@ -926,6 +942,11 @@ class YiCloudOpenSandboxTest(unittest.TestCase):
         self.assertEqual(uploaded["mode"], "700")
         self.assertIn(b"/dev/tcp/", uploaded["payload"])
         self.assertLess(len(uploaded["payload"]), 2048)
+        probe_command = instance.exec.await_args_list[0].args[0]
+        self.assertIn(
+            '[ -s "$harbor_command_path" ]',
+            probe_command,
+        )
         self.assertIn(
             yicloud_opensandbox.S3_HTTP_BOOTSTRAP_PATH,
             instance._s3_download_command(

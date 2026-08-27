@@ -2528,11 +2528,14 @@ class YiCloudOpenSandboxEnvironment(BaseEnvironment):
             if getattr(self, "_s3_downloader_ready", False):
                 return
             probe = await self.exec(
-                "if command -v curl >/dev/null 2>&1 || "
-                "command -v wget >/dev/null 2>&1 || "
-                "command -v python3 >/dev/null 2>&1; then "
+                "harbor_has_nonempty_command() { "
+                "harbor_command_path=$(command -v \"$1\" 2>/dev/null) "
+                "|| return 1; [ -s \"$harbor_command_path\" ]; }; "
+                "if harbor_has_nonempty_command curl || "
+                "harbor_has_nonempty_command wget || "
+                "harbor_has_nonempty_command python3; then "
                 "printf native; "
-                "elif command -v bash >/dev/null 2>&1; then "
+                "elif harbor_has_nonempty_command bash; then "
                 "printf bootstrap; "
                 "else printf missing; exit 45; fi",
                 cwd="/",
@@ -2596,23 +2599,30 @@ class YiCloudOpenSandboxEnvironment(BaseEnvironment):
         target = shlex.quote(temporary)
         timeout = self._s3_download_timeout_sec
         return (
+            "harbor_has_nonempty_command() { "
+            "harbor_command_path=$(command -v \"$1\" 2>/dev/null) "
+            "|| return 1; [ -s \"$harbor_command_path\" ]; }; "
             f"rm -f {target}; "
-            "if command -v curl >/dev/null 2>&1; then "
+            "if harbor_has_nonempty_command curl; then "
             f"curl --noproxy '*' --fail --silent --show-error --location "
             f"--retry 3 --connect-timeout 30 --max-time {timeout} "
             f"--output {target} \"$HARBOR_S3_URL\" || exit 48; "
-            "elif command -v wget >/dev/null 2>&1; then "
+            "elif harbor_has_nonempty_command wget; then "
             f"wget --no-proxy -q -O {target} \"$HARBOR_S3_URL\" || exit 48; "
-            "elif command -v python3 >/dev/null 2>&1; then "
+            "elif harbor_has_nonempty_command python3; then "
             "python3 -c 'import shutil,sys,urllib.request; "
             "opener=urllib.request.build_opener(urllib.request.ProxyHandler({})); "
             "response=opener.open(sys.argv[1]); "
             "output=open(sys.argv[2],\"wb\"); "
             "shutil.copyfileobj(response,output); output.close(); response.close()' "
             f"\"$HARBOR_S3_URL\" {target} || exit 48; "
-            f"elif [ -x {shlex.quote(S3_HTTP_BOOTSTRAP_PATH)} ]; then "
+            "elif harbor_has_nonempty_command bash && "
+            f"[ -x {shlex.quote(S3_HTTP_BOOTSTRAP_PATH)} ] && "
+            f"[ -s {shlex.quote(S3_HTTP_BOOTSTRAP_PATH)} ]; then "
             f"bash {shlex.quote(S3_HTTP_BOOTSTRAP_PATH)} {target} || exit 48; "
             "else exit 45; fi; "
+            f"[ -f {target} ] || "
+            "{ printf 'S3 downloader produced no file\\n' >&2; exit 49; }; "
             f"actual_size=$(wc -c < {target} | tr -d ' '); "
             f"[ \"$actual_size\" = {artifact.payload_size} ] || "
             f"{{ rm -f {target}; exit 46; }}; "
