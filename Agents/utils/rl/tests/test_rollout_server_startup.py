@@ -29,6 +29,12 @@ class RolloutServerStartupTest(unittest.TestCase):
 
         self.assertIn('>/dev/null 2>&1 9>&- &', source)
 
+    def test_exited_zellij_session_is_not_considered_ready(self) -> None:
+        source = ZELLIJ_HELPER.read_text(encoding="utf-8")
+
+        self.assertIn("list-sessions --no-formatting", source)
+        self.assertIn("$0 !~ /\\(EXITED/", source)
+
     def test_stop_does_not_require_python(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             root_path = Path(root)

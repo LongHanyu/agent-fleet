@@ -50,7 +50,8 @@ lock_file="${RL_JOB_RUNTIME_ROOT}/${session_slug}.lock"
 mkdir -p "$job_queue_dir/pending" "$job_queue_dir/active" "$job_queue_dir/results" "$job_runtime_dir" "$RL_JOB_RUNTIME_ROOT"
 
 session_exists() {
-  zellij list-sessions --short 2>/dev/null | grep -qx "$session_name"
+  zellij list-sessions --no-formatting 2>/dev/null \
+    | awk -v name="$session_name" '$1 == name && $0 !~ /\(EXITED/ { found = 1 } END { exit !found }'
 }
 
 session_ready() {

@@ -37,6 +37,28 @@ class RolloutRequestContextTest(unittest.TestCase):
     def test_http_backlog_supports_rollout_burst(self) -> None:
         self.assertGreaterEqual(MODULE.RolloutHTTPServer.request_queue_size, 300)
 
+    def test_zellij_session_exists_rejects_exited_session(self) -> None:
+        session_name = "hr-0123456789abcdef0123456789abcdef"
+        cases = (
+            (f"{session_name} [Created 1m ago]\n", True),
+            (f"{session_name} [Created 1m ago] (EXITED - attach to resurrect)\n", False),
+            (f"{session_name}-other [Created 1m ago]\n", False),
+        )
+        for stdout, expected in cases:
+            with (
+                self.subTest(stdout=stdout),
+                mock.patch.object(
+                    MODULE.subprocess,
+                    "run",
+                    return_value=mock.Mock(returncode=0, stdout=stdout),
+                ) as run,
+            ):
+                self.assertIs(MODULE._zellij_session_exists(session_name), expected)
+                self.assertEqual(
+                    run.call_args.args[0],
+                    ["zellij", "list-sessions", "--no-formatting"],
+                )
+
     def _enqueue_with_temp_context(
         self,
         request: dict[str, object],

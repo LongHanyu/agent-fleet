@@ -305,7 +305,7 @@ def _run_helper(cmd: list[str], *, cwd: str, env: dict[str, str], timeout: float
 def _zellij_session_exists(session_name: str) -> bool:
     try:
         result = subprocess.run(
-            ["zellij", "list-sessions", "--short"],
+            ["zellij", "list-sessions", "--no-formatting"],
             cwd=str(SCRIPT_DIR),
             text=True,
             capture_output=True,
@@ -316,7 +316,11 @@ def _zellij_session_exists(session_name: str) -> bool:
         return False
     if result.returncode != 0:
         return False
-    return session_name in {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    return any(
+        line.split(maxsplit=1)[0] == session_name and "(EXITED" not in line
+        for line in result.stdout.splitlines()
+        if line.strip()
+    )
 
 
 def _cached_job_session(job_slug: str) -> str:
