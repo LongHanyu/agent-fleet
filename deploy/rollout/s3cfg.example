@@ -1,0 +1,8 @@
+[default]
+host_base = ceph.lg.shzhisuan.com:80
+host_bucket = ceph.lg.shzhisuan.com:80/%(bucket)s
+use_https = False
+access_key = replace-with-s3-access-key
+secret_key = replace-with-s3-secret-key
+signature_v2 = True
+socket_timeout = 30

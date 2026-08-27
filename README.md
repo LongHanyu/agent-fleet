@@ -38,6 +38,9 @@ export MODEL=your-model-id
 ./scripts/setup.sh
 ```
 
+For the preconfigured CPU-hosted Claude Code rollout service backed by YiCloud
+OpenSandbox, use [deploy/rollout](deploy/rollout/README.md).
+
 ### 4. Run one benchmark
 
 Validate the environment with a one-task canary first:
