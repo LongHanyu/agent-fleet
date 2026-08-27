@@ -9,12 +9,11 @@ WORKER_ID="${1:?worker id required}"
 PENDING_DIR="$RL_QUEUE_DIR/pending"
 ACTIVE_QUEUE_DIR="$RL_QUEUE_DIR/active"
 RESULTS_DIR="$RL_QUEUE_DIR/results"
-WORKLIST_DIR="$RL_QUEUE_DIR/worklists"
 WORKER_LOG="$RUNTIME_DIR/rl-worker-${WORKER_ID}.log"
 CURRENT_FILE="$ACTIVE_QUEUE_DIR/worker-${WORKER_ID}.current"
 AGENT_TAIL_PID=""
 
-mkdir -p "$PENDING_DIR" "$ACTIVE_QUEUE_DIR" "$RESULTS_DIR" "$WORKLIST_DIR" "$RUNTIME_DIR/worker-logs"
+mkdir -p "$PENDING_DIR" "$ACTIVE_QUEUE_DIR" "$RESULTS_DIR" "$RUNTIME_DIR/worker-logs"
 
 log_msg() {
   printf '[%s] [rl-worker-%s] %s\n' "$(date '+%F %T')" "$WORKER_ID" "$1" | tee -a "$WORKER_LOG"
@@ -225,14 +224,6 @@ while true; do
   rename_pane "$display_name"
   environment_type="${environment_type:-${RL_ENVIRONMENT_TYPE:-docker}}"
   log_msg "starting request=${request_id} display=${display_name} task=${task_name} environment=${environment_type} ray_submission=${ray_submission_id:-none} polar_task=${polar_task_id:-none}"
-
-  if [[ -n "$dataset_root" ]]; then
-    worklist="$WORKLIST_DIR/$(safe_name "$dataset_root").txt"
-    if [[ ! -s "$worklist" ]]; then
-      python3 "$RL_SCRIPT_DIR/rl_dataset_worklist.py" "$dataset_root" \
-        --output "$worklist" --disabled-task-ids "$RL_DISABLED_TASK_IDS" >> "$WORKER_LOG" 2>&1 || true
-    fi
-  fi
 
   if [[ "${HARBOR_DRY_RUN:-0}" != "1" ]]; then
     start_agent_log_stream "$task_jobs_root"

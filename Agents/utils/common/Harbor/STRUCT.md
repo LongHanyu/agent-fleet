@@ -221,7 +221,6 @@ Agents/utils/rl/
 ├── monitor_rl_rollout.sh             # RL job monitor pane
 ├── run_rl_rollout_worker.sh          # Queue worker that reuses harboropik.sh
 ├── rollout_worker_utils.py            # Request/result and monitor helpers
-└── rl_dataset_worklist.py            # Dataset-to-task-list helper
 ```
 
 ## RL Rollout Variables
