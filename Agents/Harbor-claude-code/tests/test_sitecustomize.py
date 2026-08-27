@@ -152,12 +152,16 @@ class ClaudeInstallCommandTest(unittest.TestCase):
         return captured[0]
 
     def test_node_dist_url_bootstrap_included_when_configured(self) -> None:
+        module = load_module()
         url = "https://registry.npmmirror.com/-/binary/node/v22.14.0/node-v22.14.0-linux-x64.tar.gz"
         command = self._install_command(
             {"CC_OPIK_ENABLE_HOOK": "false", "CC_NODE_DIST_URL": url}
         )
         self.assertIn(url, command)
         self.assertIn("@anthropic-ai/claude-code@2.1.90", command)
+        self.assertIn(module.CLAUDE_NODE_RUNTIME_READY_COMMAND, command)
+        self.assertIn("if ! node_runtime_ready && [ -n", command)
+        self.assertIn("Node.js >=22.14 with npm is required", command)
         bash_check = subprocess.run(
             ["bash", "-n"],
             input=command,
@@ -190,7 +194,7 @@ class ClaudeInstallCommandTest(unittest.TestCase):
         guarded_extract = (
             'if python3 - <<\'PY\' "$node_dist_tgz" "$node_dir"'
         )
-        package_manager_fallback = "if ! command -v npm >/dev/null 2>&1; then"
+        package_manager_fallback = "if ! node_runtime_ready; then"
         self.assertIn(guarded_extract, command)
         self.assertLess(
             command.index(guarded_extract),

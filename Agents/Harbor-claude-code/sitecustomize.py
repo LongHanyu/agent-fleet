@@ -52,6 +52,15 @@ _HOOK_EVENTS = [
     "SessionEnd",
 ]
 
+CLAUDE_NODE_RUNTIME_READY_COMMAND = (
+    "command -v node >/dev/null 2>&1 "
+    "&& command -v npm >/dev/null 2>&1 "
+    "&& node -e 'const [major, minor] = process.versions.node.split(\".\").map(Number); "
+    "process.exit(major > 22 || (major === 22 && minor >= 14) ? 0 : 1)' "
+    ">/dev/null 2>&1 "
+    "&& npm --version >/dev/null 2>&1"
+)
+
 
 def _rust_package_mirror_bootstrap(extra_env: dict[str, str] | None) -> str:
     extra_env = extra_env or {}
@@ -249,6 +258,9 @@ def _patch_claude_code_realtime_hooks() -> None:
             node_dist_url = shlex.quote((extra_env or {}).get("CC_NODE_DIST_URL", ""))
             return (
                 "set -euo pipefail; "
+                "node_runtime_ready() { "
+                f"  {CLAUDE_NODE_RUNTIME_READY_COMMAND}; "
+                "}; "
                 f"if [ ! -f {claude_tgz_path} ] && [ -n {claude_tgz_url} ]; then "
                 "  tmp_tgz=\"$(mktemp /tmp/claude-code-XXXXXX.tgz)\"; "
                 f"  python3 - <<'PY' {claude_tgz_url} \"$tmp_tgz\" >/dev/null 2>&1 || true\n"
@@ -262,7 +274,7 @@ def _patch_claude_code_realtime_hooks() -> None:
                 # Prefer the offline Node runtime prepared by monitor_harbor.sh.
                 # SWE-bench task images often lack npm, and apt may be slow or
                 # unavailable inside the isolated task container.
-                "if ! command -v npm >/dev/null 2>&1 && [ -f "
+                "if ! node_runtime_ready && [ -f "
                 f"{node_runtime_path}"
                 " ] && command -v python3 >/dev/null 2>&1; then "
                 "  node_dir=\"$(mktemp -d /tmp/tb-node-XXXXXX)\"; "
@@ -286,7 +298,7 @@ def _patch_claude_code_realtime_hooks() -> None:
                 # Sandboxes without host mounts can get Node from an explicitly
                 # configured, Sandbox-reachable dist endpoint instead of
                 # depending on the task image's package manager.
-                "if ! command -v npm >/dev/null 2>&1 && [ -n "
+                "if ! node_runtime_ready && [ -n "
                 f"{node_dist_url}"
                 " ] && command -v python3 >/dev/null 2>&1; then "
                 "  node_dist_tgz=\"$(mktemp /tmp/tb-node-dist-XXXXXX.tgz)\"; "
@@ -328,7 +340,7 @@ def _patch_claude_code_realtime_hooks() -> None:
                 "  done; "
                 "  return 1; "
                 "}; "
-                "if ! command -v npm >/dev/null 2>&1; then "
+                "if ! node_runtime_ready; then "
                 "  if command -v apk >/dev/null 2>&1; then "
                 "    apk add --no-cache nodejs npm bash curl; "
                 "  elif command -v apt-get >/dev/null 2>&1; then "
@@ -337,6 +349,11 @@ def _patch_claude_code_realtime_hooks() -> None:
                 "  elif command -v yum >/dev/null 2>&1; then "
                 "    yum install -y nodejs npm; "
                 "  fi; "
+                "fi; "
+                "hash -r; "
+                "if ! node_runtime_ready; then "
+                "  echo '[ERROR] Node.js >=22.14 with npm is required for Claude Code' >&2; "
+                "  exit 1; "
                 "fi; "
                 "mkdir -p \"$HOME/.local/bin\"; "
                 "if command -v npm >/dev/null 2>&1; then npm config set prefix \"$HOME/.local\" >/dev/null 2>&1 || true; fi; "
