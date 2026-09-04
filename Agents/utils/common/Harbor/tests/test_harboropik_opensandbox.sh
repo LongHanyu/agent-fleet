@@ -109,6 +109,8 @@ run_dry() {
     HARBOR_CC_OPIK_ENABLE_HOOK="${RUN_DRY_CC_OPIK_ENABLE_HOOK:-}" \
     HARBOR_CC_HOOK_SOURCE="${RUN_DRY_CC_HOOK_SOURCE:-$tmp/deps/claude_realtime_trace.py}" \
     HARBOR_ANTHROPIC_AUTH_TOKEN=fake-api-key \
+    HARBOR_CLAUDE_CODE_API_TIMEOUT_MS=123000 \
+    HARBOR_CLAUDE_CODE_MAX_RETRIES=2 \
     HARBOR_LLM_KWARGS='{"temperature":1.0}' \
     HARBOR_CC_CLAUDE_TGZ_SOURCE="$tmp/deps/claude.tgz" \
     HARBOR_CC_PY_WHEEL_DIR_SOURCE="$tmp/deps/wheels" \
@@ -184,10 +186,10 @@ fi
 
 rebench_agent="$(run_dry \
   'test-project/manual:immutable' "$tmp/does-not-exist.py" '{}' \
-  agent-fleet-swe-rebench-v2 opensandbox 0 claude-code)"
+  agent-fleet-swe-rebench-v2 opensandbox 0 claude-code 0)"
 grep -F -- 'HARBOR_VERIFIER_RUNTIME_BUNDLE_ARCHIVE=/opt/tb-opik/python-wheels/agent-fleet-swe-rebench-v2-verifier-bundle.tar.gz' \
   <<< "$rebench_agent" >/dev/null
-grep -F -- "\"source\":\"$tmp/deps/wheels\",\"target\":\"/opt/tb-opik/python-wheels\",\"read_only\":true" \
+grep -F -- "\"source\": \"$tmp/deps/wheels\", \"target\": \"/opt/tb-opik/python-wheels\", \"read_only\": true" \
   <<< "$rebench_agent" >/dev/null
 
 set +e
@@ -385,6 +387,10 @@ grep -F -- 'FAKE_HARBOR_ARG=--mounts-json' <<< "$claude_opensandbox" >/dev/null
 grep -F -- 'FAKE_HARBOR_ARG=CC_OPIK_CLAUDE_TGZ_PATH=' \
   <<< "$claude_opensandbox" >/dev/null
 grep -F -- 'FAKE_HARBOR_ARG=HARBOR_VERIFIER_UV_BIN_DIR=/opt/tb-uv-backup/bin' \
+  <<< "$claude_opensandbox" >/dev/null
+grep -F -- 'FAKE_HARBOR_ARG=API_TIMEOUT_MS=123000' \
+  <<< "$claude_opensandbox" >/dev/null
+grep -F -- 'FAKE_HARBOR_ARG=CLAUDE_CODE_MAX_RETRIES=2' \
   <<< "$claude_opensandbox" >/dev/null
 
 claude_opensandbox_web_mcp="$(
