@@ -177,6 +177,7 @@ Typical dataset paths:
 | `LOCAL_WHEEL_PORT` | Preferred local dependency HTTP server port |
 | `LOCAL_WHEEL_PORT_ATTEMPTS` | Number of local port attempts |
 | `HARBOR_REMOTE_WHEEL_SERVER_URLS` | Comma-separated fallback dependency cache URLs |
+| `HARBOR_CC_WEB_MCP_ENABLED` | Set to `1` to build, cache and enable the bundled Exa MCP; `0` disables it |
 | `HARBOR_SKIP_DOCKERHUB_PREFLIGHT` | Skip Docker Hub preflight connectivity check |
 | `HARBOR_FORCE_BUILD` | Build task images locally instead of using prebuilt images |
 | `HARBOR_TIMEOUT_MULTIPLIER` | General Harbor timeout multiplier |

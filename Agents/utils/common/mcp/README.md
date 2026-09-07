@@ -1,11 +1,23 @@
 # Exa Web MCP
-Build the stdio proxy before Agent Fleet starts:
+Enable automatic preparation alongside the agent dependency cache:
 ```bash
-python3 -m zipapp Agents/utils/common/mcp/exa -o /data/exa-web-mcp.pyz
+export HARBOR_CC_WEB_MCP_ENABLED=1
 ```
-Configure existing S3/Claude integration; replace `anonymous` with a paid key when needed:
+
+The bundled Python sources produce a deterministic, content-addressed zipapp in
+`LOCAL_WHEEL_DIR`. Unchanged sources reuse it; source changes select a new artifact
+without overwriting artifacts in use. OpenSandbox checks/reuses the existing S3
+object or uploads it through the existing transport. Docker uses the existing
+local artifact mount. This does not upload to a remote HTTP cache.
+
+Anonymous Exa access is the default. Set `EXA_API_KEY` in private runtime
+configuration to use your own key; keys are never embedded in the artifact.
+Anonymous access can be rate-limited and is not guaranteed to support a benchmark.
+
+`HARBOR_CC_WEB_MCP_ENABLED` is the only MCP enable switch. Its default is `0`.
+`HARBOR_CC_WEB_MCP_SOURCE` is an internally derived cache path, not user
+configuration: an old exported value is ignored, including when MCP is disabled.
+For a standalone build outside Agent Fleet:
 ```bash
-export HARBOR_CC_WEB_MCP_SOURCE=/data/exa-web-mcp.pyz
-export HARBOR_CC_WEB_MCP_MOUNT_PATH=/opt/agent-fleet/exa-web-mcp.pyz
-export EXA_API_KEY=anonymous
+python3 Agents/utils/common/mcp/build.py /data/mcp-cache
 ```
