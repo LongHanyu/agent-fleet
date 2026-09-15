@@ -131,6 +131,15 @@ Agent integration internals: [Harbor-claude-code/STRUCT.md](Harbor-claude-code/S
 [Harbor-opencode/STRUCT.md](Harbor-opencode/STRUCT.md),
 [Harbor-pi/STRUCT.md](Harbor-pi/STRUCT.md).
 
+## Web Research Preparation (`../Tasks/web_research/common/`)
+
+Shared conversion, templates, and grading for BrowseComp and DeepSearchQA live
+in `../Tasks/web_research/common/`. Dataset entrypoints stay under `Tasks/`; conversion is
+a startup preparation step when `HARBOR_CC_WEB_MCP_ENABLED=1` and the selected
+dataset directory is missing, never a per-trial hook. Defaults live in
+`../Tasks/web_research/common/env.sh`; explicit adapters remain available. See the
+[web research guide](../Tasks/web_research/common/README.md).
+
 ## Remote Rollout (`utils/rl/`)
 
 ```bash

@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,15 @@ def encrypt(value: str, password: str) -> str:
 
 
 class AdapterTest(unittest.TestCase):
+    def test_dataset_preparation_entrypoints(self):
+        tasks = Path(__file__).resolve().parents[3]
+        for name in ("BrowseComp", "DeepSearchQA"):
+            result = subprocess.run([sys.executable, str(tasks / name / "adapter.py"), "--help"],
+                                    capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("--input", result.stdout)
+            self.assertIn("--output-dir", result.stdout)
+
     def test_judge_inherits_model_headers(self):
         env = {
             "JUDGE_API_URL": "https://judge.test/v1/chat/completions",
@@ -125,6 +135,7 @@ class AdapterTest(unittest.TestCase):
                 config["verifier"]["env"]["JUDGE_LLM_KWARGS"],
                 "${HARBOR_LLM_KWARGS:-{}}",
             )
+            self.assertEqual(config["verifier"]["env"]["JUDGE_MODEL"], "${MODEL}")
             self.assertNotIn("Gold marker 42", (task / "instruction.md").read_text())
             self.assertEqual(
                 json.loads((task / "tests/reference.json").read_text())["answer"],

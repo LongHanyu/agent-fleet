@@ -27,6 +27,8 @@ elif [[ "\${3:-}" == "PyYAML" ]]; then
   printf '%s\n' '6.0.3'
 elif [[ "\${3:-}" == "s3cmd" ]]; then
   printf '%s\n' '2.4.0'
+elif [[ "\${3:-}" == "toml" ]]; then
+  printf '%s\n' '0.10.2'
 elif [[ "\${3:-}" == "e2b" ]]; then
   printf '%s\n' '2.32.1'
 elif [[ "\${3:-}" == "dockerfile-parse" ]]; then

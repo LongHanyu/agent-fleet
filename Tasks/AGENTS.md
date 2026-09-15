@@ -15,7 +15,7 @@ fleet from `Agents/Openclaw/` (see
 | `SWE-rebench-v2/` | Official SWE-rebench-V2 native Harbor task generator |
 | `SWE-rebench-v2-TaskTrove/` | Third-party TaskTrove Harbor registry integration |
 | `TMax/` | Harbor registry dataset entrypoint |
-| `WebResearchAdapter/` | BrowseComp and DeepSearchQA native Harbor task generator |
+| `BrowseComp/`, `DeepSearchQA/` | Native Harbor dataset entrypoints; automatic preparation and optional manual adapters share `web_research/common/` |
 | `Pinchbench/` | PinchBench runner for the OpenClaw fleet |
 | `clawBio/` | ClawBio bioinformatics benchmark for the OpenClaw fleet |
 
@@ -57,25 +57,42 @@ registry integration remains documented under
 [SWE-rebench-v2-TaskTrove/](SWE-rebench-v2-TaskTrove/) as an explicitly
 third-party option.
 
-## Web Research Adapter (`WebResearchAdapter/`)
+## Web Research Tasks (`BrowseComp/`, `DeepSearchQA/`)
 
-Generates Harbor tasks from official BrowseComp and DeepSearchQA CSV files:
+With `HARBOR_CC_WEB_MCP_ENABLED=1`, selecting `DATASET_NAME=browsecomp` or
+`deepsearchqa` automatically prepares a missing dataset before running tasks.
+No manual `uv` generation step is required. After normal host setup and
+model/sandbox configuration, run from the repository root:
 
 ```bash
-cd Tasks/WebResearchAdapter
-uv run browsecomp-adapter --input /data/browse_comp_test_set.csv --output-dir /data/harbor/browsecomp
-uv run deepsearchqa-adapter --input /data/DSQA-full.csv --output-dir /data/harbor/deepsearchqa
+HARBOR_CC_WEB_MCP_ENABLED=1 OPIK_URL= \
+  ./scripts/run_fleet.sh --taskset browsecomp --agent opencode --workers 1
+```
+
+Use `--taskset deepsearchqa` for DeepSearchQA. The default output directory is
+`$AGENT_FLEET_CACHE_DIR/web-search/tasks/$DATASET_NAME`; override it with
+`DATASET_PATH`. Existing directories are reused unchanged. If missing,
+startup downloads or reuses the cached official CSV, calls the shared adapter,
+then continues the normal Agent Fleet flow. Conversion never runs inside a trial.
+
+**Optional manual preparation** from official CSV files:
+
+```bash
+uv run --project Tasks/web_research/common python Tasks/BrowseComp/adapter.py --input /data/browse_comp_test_set.csv --output-dir /data/harbor/browsecomp
+uv run --project Tasks/web_research/common python Tasks/DeepSearchQA/adapter.py --input /data/DSQA-full.csv --output-dir /data/harbor/deepsearchqa
 ```
 
 Source count and SHA-256 validation happen before task filtering; keep each
-dataset's validation and reward semantics separate. Edit the generator and
-`src/web_research_adapter/task-template/` to change generated tasks.
+dataset's validation and reward semantics separate. Edit the shared generator
+and `Tasks/web_research/common/src/web_research_adapter/task-template/` to change
+generated tasks.
 
-Register generated roots in `RL_DATASET_ROOTS` for rollout use. Search/fetch
-tools or an external MCP must be provisioned by the deployment. The verifier
+For rollout, `ROLLOUT=1 DATASET_NAME=browsecomp` (or `deepsearchqa`) with the
+same MCP switch also prepares the primary dataset before the listener starts.
+Register additional already-prepared roots in `RL_DATASET_ROOTS`. The verifier
 reuses the trial model gateway and returns rewards through the existing
 rollout path; do not configure `RL_RESULT_PROCESSOR`. Configuration and
-generation options: [WebResearchAdapter/README.md](WebResearchAdapter/README.md).
+generation options: [web_research/common/README.md](web_research/common/README.md).
 
 ## PinchBench (`Pinchbench/`)
 
@@ -149,7 +166,7 @@ Run from the repo root:
 ```bash
 python3 -m unittest discover -s Tasks/Pinchbench/tests
 python3 -m unittest discover -s Tasks/clawBio/tests
-uv run --project Tasks/WebResearchAdapter python -m unittest discover -s Tasks/WebResearchAdapter/tests -v
+uv run --project Tasks/web_research/common python -m unittest discover -s Tasks/web_research/common/tests -v
 uv run --project Tasks/SWE-rebench-v2 pytest Tasks/SWE-rebench-v2/tests -q
 ```
 
