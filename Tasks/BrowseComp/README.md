@@ -15,7 +15,7 @@ HARBOR_CC_WEB_MCP_ENABLED=1 OPIK_URL= \
 Startup automatically prepares the dataset if its directory is missing.
 The default is `$AGENT_FLEET_CACHE_DIR/web-search/tasks/browsecomp`; override
 it with `DATASET_PATH`. Existing directories are reused without validation.
-See the [shared guide](../web_research/common/README.md) for offline
+See the [shared guide](../../Agents/utils/web_search/README.md) for offline
 source caching, image selection, and rollout configuration.
 
 ## Manual Preparation (Optional)
@@ -23,7 +23,7 @@ source caching, image selection, and rollout configuration.
 From the repository root, convert the official, unmodified CSV explicitly:
 
 ```bash
-uv run --project Tasks/web_research/common python Tasks/BrowseComp/adapter.py \
+uv run --project Agents/utils/web_search python Tasks/BrowseComp/adapter.py \
   --input /data/browse_comp_test_set.csv --output-dir /data/harbor/browsecomp
 ```
 
@@ -43,7 +43,7 @@ AGENT=opencode DATASET_NAME=browsecomp DATASET_PATH=/data/harbor/browsecomp \
 ```
 
 Use `AGENT=claude-code` or `opencode`. Pi requires a compatible MCP extension;
-its pending integration is described in the [shared guide](../web_research/common/README.md).
+its pending integration is described in the [shared guide](../../Agents/utils/web_search/README.md).
 For HTTP rollout, register `browsecomp=/data/harbor/browsecomp` in
 `RL_DATASET_ROOTS`, then submit `dataset_name=browsecomp` and a generated task ID
 such as `browsecomp-000000` through the existing rollout endpoint.

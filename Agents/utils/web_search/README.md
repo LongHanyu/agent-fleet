@@ -1,7 +1,7 @@
-# Shared Web Research Preparation
+# Shared Web Search Preparation
 
-Implementation shared by the [BrowseComp](../../BrowseComp/) and
-[DeepSearchQA](../../DeepSearchQA/) task entrypoints. With
+Implementation shared by the [BrowseComp](../../../Tasks/BrowseComp/) and
+[DeepSearchQA](../../../Tasks/DeepSearchQA/) task entrypoints. With
 `HARBOR_CC_WEB_MCP_ENABLED=1`, startup prepares a missing selected dataset once.
 Generated task directories use the existing Harbor runner or HTTP rollout
 listener; conversion never runs inside an agent trial.
@@ -60,7 +60,7 @@ With this switch disabled, `browsecomp` and `deepsearchqa` require an explicit
 ## Manual Preparation (Optional)
 
 ```bash
-cd Tasks/web_research/common
+cd Agents/utils/web_search
 uv run browsecomp-adapter \
   --input /data/browse_comp_test_set.csv \
   --output-dir /data/harbor/browsecomp
@@ -102,7 +102,7 @@ generated task ID. Reward and trajectory collection use the existing Harbor
 verifier and `rollout_details` path; do not configure `RL_RESULT_PROCESSOR`.
 
 The task data does not embed a search provider, credential, or agent runtime.
-Enable the deployment's [shared Exa MCP](../../../Agents/utils/common/mcp/README.md)
+Enable the deployment's [shared Exa MCP](../common/mcp/README.md)
 separately. Its existing content-addressed cache and OpenSandbox S3 transport
 deliver the same filtered tools to each supported harness. Anonymous mode
 does not require a paid Exa key and is subject to rate limits.

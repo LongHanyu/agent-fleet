@@ -8,7 +8,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from .adapter import WebResearchAdapter
+from .adapter import WebSearchAdapter
 
 
 def prepare(benchmark: str, destination: Path, source_dir: Path, image: str) -> None:
@@ -39,7 +39,7 @@ def prepare(benchmark: str, destination: Path, source_dir: Path, image: str) -> 
                 with urllib.request.urlopen(url, timeout=60) as response, input_path.open("wb") as output:
                     shutil.copyfileobj(response, output)
             tasks = staging / "tasks"
-            generated = WebResearchAdapter(benchmark, input_path, tasks, image=image).run()
+            generated = WebSearchAdapter(benchmark, input_path, tasks, image=image).run()
             # Cache only successfully validated source bytes, using atomic replace.
             if not cached:
                 source_dir.mkdir(parents=True, exist_ok=True)

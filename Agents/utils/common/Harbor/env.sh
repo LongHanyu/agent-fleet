@@ -16,8 +16,8 @@ DATASET_NAME="${DATASET_NAME:-auto}"
 _HARBOR_DATASET_PATH_CONFIGURED=0
 [[ -z "${DATASET_PATH:-}" ]] || _HARBOR_DATASET_PATH_CONFIGURED=1
 if [[ "${HARBOR_CC_WEB_MCP_ENABLED:-0}" == "1" ]]; then
-  # shellcheck source=../../../../Tasks/web_research/common/env.sh
-  source "$REPO_ROOT/Tasks/web_research/common/env.sh"
+  # shellcheck source=../../web_search/env.sh
+  source "$REPO_ROOT/Agents/utils/web_search/env.sh"
 elif [[ "$DATASET_NAME" == "browsecomp" || "$DATASET_NAME" == "deepsearchqa" ]] &&
      [[ -z "${DATASET_PATH:-}" ]]; then
   echo "[ERROR] $DATASET_NAME requires DATASET_PATH or HARBOR_CC_WEB_MCP_ENABLED=1" >&2

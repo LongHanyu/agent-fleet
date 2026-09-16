@@ -15,7 +15,7 @@ fleet from `Agents/Openclaw/` (see
 | `SWE-rebench-v2/` | Official SWE-rebench-V2 native Harbor task generator |
 | `SWE-rebench-v2-TaskTrove/` | Third-party TaskTrove Harbor registry integration |
 | `TMax/` | Harbor registry dataset entrypoint |
-| `BrowseComp/`, `DeepSearchQA/` | Native Harbor dataset entrypoints; automatic preparation and optional manual adapters share `web_research/common/` |
+| `BrowseComp/`, `DeepSearchQA/` | Native Harbor dataset entrypoints; automatic preparation and optional manual adapters share `Agents/utils/web_search/` |
 | `Pinchbench/` | PinchBench runner for the OpenClaw fleet |
 | `clawBio/` | ClawBio bioinformatics benchmark for the OpenClaw fleet |
 
@@ -57,7 +57,7 @@ registry integration remains documented under
 [SWE-rebench-v2-TaskTrove/](SWE-rebench-v2-TaskTrove/) as an explicitly
 third-party option.
 
-## Web Research Tasks (`BrowseComp/`, `DeepSearchQA/`)
+## Web Search Tasks (`BrowseComp/`, `DeepSearchQA/`)
 
 With `HARBOR_CC_WEB_MCP_ENABLED=1`, selecting `DATASET_NAME=browsecomp` or
 `deepsearchqa` automatically prepares a missing dataset before running tasks.
@@ -78,13 +78,13 @@ then continues the normal Agent Fleet flow. Conversion never runs inside a trial
 **Optional manual preparation** from official CSV files:
 
 ```bash
-uv run --project Tasks/web_research/common python Tasks/BrowseComp/adapter.py --input /data/browse_comp_test_set.csv --output-dir /data/harbor/browsecomp
-uv run --project Tasks/web_research/common python Tasks/DeepSearchQA/adapter.py --input /data/DSQA-full.csv --output-dir /data/harbor/deepsearchqa
+uv run --project Agents/utils/web_search python Tasks/BrowseComp/adapter.py --input /data/browse_comp_test_set.csv --output-dir /data/harbor/browsecomp
+uv run --project Agents/utils/web_search python Tasks/DeepSearchQA/adapter.py --input /data/DSQA-full.csv --output-dir /data/harbor/deepsearchqa
 ```
 
 Source count and SHA-256 validation happen before task filtering; keep each
 dataset's validation and reward semantics separate. Edit the shared generator
-and `Tasks/web_research/common/src/web_research_adapter/task-template/` to change
+and `Agents/utils/web_search/src/web_search_adapter/task-template/` to change
 generated tasks.
 
 For rollout, `ROLLOUT=1 DATASET_NAME=browsecomp` (or `deepsearchqa`) with the
@@ -92,7 +92,7 @@ same MCP switch also prepares the primary dataset before the listener starts.
 Register additional already-prepared roots in `RL_DATASET_ROOTS`. The verifier
 reuses the trial model gateway and returns rewards through the existing
 rollout path; do not configure `RL_RESULT_PROCESSOR`. Configuration and
-generation options: [web_research/common/README.md](web_research/common/README.md).
+generation options: [web_search/README.md](../Agents/utils/web_search/README.md).
 
 ## PinchBench (`Pinchbench/`)
 
@@ -166,11 +166,11 @@ Run from the repo root:
 ```bash
 python3 -m unittest discover -s Tasks/Pinchbench/tests
 python3 -m unittest discover -s Tasks/clawBio/tests
-uv run --project Tasks/web_research/common python -m unittest discover -s Tasks/web_research/common/tests -v
+uv run --project Agents/utils/web_search python -m unittest discover -s Agents/utils/web_search/tests -v
 uv run --project Tasks/SWE-rebench-v2 pytest Tasks/SWE-rebench-v2/tests -q
 ```
 
-The web research adapter requires Python 3.11 or newer and its own project
+The web search adapter requires Python 3.11 or newer and its own project
 dependencies. The SWE-rebench-V2 adapter requires Python 3.12 or newer and
 its own project dependencies. Task-selection changes also affect the shared
 Harbor suite listed in [Agents/AGENTS.md](../Agents/AGENTS.md#development).

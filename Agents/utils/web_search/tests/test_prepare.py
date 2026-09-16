@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from web_research_adapter.prepare import prepare
+from web_search_adapter.prepare import prepare
 
 REPO = Path(__file__).resolve().parents[4]
 CSV = b"problem,problem_category,answer,answer_type\nQuestion,Test,Answer,Single Answer\n"
@@ -25,7 +25,7 @@ class PrepareTest(unittest.TestCase):
         self.destination = self.root / "tasks"
         self.sources = self.root / "sources"
         for name, value in (("EXPECTED_COUNTS", 1), ("EXPECTED_SHA256", hashlib.sha256(CSV).hexdigest())):
-            patcher = patch.dict(f"web_research_adapter.adapter.{name}", {"deepsearchqa": value})
+            patcher = patch.dict(f"web_search_adapter.adapter.{name}", {"deepsearchqa": value})
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -63,7 +63,7 @@ class PrepareTest(unittest.TestCase):
     def test_generation_failure_does_not_publish_partial_tasks(self):
         with (
             patch("urllib.request.urlopen", return_value=io.BytesIO(CSV)),
-            patch("web_research_adapter.adapter.WebResearchAdapter._write_task", side_effect=OSError("full")),
+            patch("web_search_adapter.adapter.WebSearchAdapter._write_task", side_effect=OSError("full")),
             self.assertRaises(OSError),
         ):
             self.prepare()
@@ -102,7 +102,7 @@ class PrepareTest(unittest.TestCase):
             with self.subTest(name=name, enabled=enabled):
                 result = subprocess.run(
                     ["bash", "-c", 'source "$1"; printf "%s" "${DATASET_PATH:-}"',
-                     "bash", str(REPO / "Tasks/web_research/common/env.sh")],
+                     "bash", str(REPO / "Agents/utils/web_search/env.sh")],
                     env={"PATH": os.environ["PATH"], "DATASET_NAME": name,
                          "HARBOR_CC_WEB_MCP_ENABLED": enabled, "AGENT_FLEET_CACHE_DIR": str(self.root)},
                     capture_output=True, text=True, check=True,
@@ -157,7 +157,7 @@ class PrepareTest(unittest.TestCase):
         for enabled, name in (("0", "browsecomp"), ("1", "unrelated")):
             result = subprocess.run(
                 ["bash", "-c", 'source "$1"; harbor_prepare_web_search_dataset',
-                 "bash", str(REPO / "Tasks/web_research/common/env.sh")],
+                 "bash", str(REPO / "Agents/utils/web_search/env.sh")],
                 env={"PATH": os.environ["PATH"], "DATASET_NAME": name,
                      "DATASET_PATH": str(self.destination), "HARBOR_CC_WEB_MCP_ENABLED": enabled,
                      "HARBOR_OPIK_PYTHON": "/missing/python"},

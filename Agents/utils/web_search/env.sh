@@ -16,8 +16,8 @@ harbor_prepare_web_search_dataset() {
   [[ "${HARBOR_CC_WEB_MCP_ENABLED:-0}" == "1" ]] || return 0
   case "$name" in browsecomp|deepsearchqa) ;; *) return 0 ;; esac
   [[ ! -d "$destination" ]] || return 0
-  PYTHONPATH="$REPO_ROOT/Tasks/web_research/common/src${PYTHONPATH:+:$PYTHONPATH}" \
-    "$HARBOR_OPIK_PYTHON" -m web_research_adapter.prepare "$name" "$destination" \
+  PYTHONPATH="$REPO_ROOT/Agents/utils/web_search/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$HARBOR_OPIK_PYTHON" -m web_search_adapter.prepare "$name" "$destination" \
     --source-dir "$AGENT_FLEET_CACHE_DIR/web-search/sources" \
     --image "${HARBOR_OPENSANDBOX_IMAGE_REF:-python:3.12-slim}"
 }
