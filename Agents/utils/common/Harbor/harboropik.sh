@@ -1204,7 +1204,7 @@ run_harbor() {
   fi
 
   local cmd=("$HARBOR_CLI_BIN")
-  if harbor_trace_to_opik_enabled; then
+  if harbor_trace_to_opik_enabled || [[ "$HARBOR_OPIK_BIN" != "$HARBOR_RUNNER_DIR/bin/opik" ]]; then
     cmd=("$HARBOR_OPIK_BIN" harbor)
   fi
   cmd+=(
