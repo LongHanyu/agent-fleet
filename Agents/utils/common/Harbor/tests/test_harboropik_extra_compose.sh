@@ -415,6 +415,7 @@ main() {
     "claude-code" "$capture_bin" "$claude_capture" "$tmp/claude-default" \
     "codepde@1.0"
   assert_extra_compose_arg "$claude_capture" "$default_overlay"
+  assert_arg_pair "$claude_capture" "harbor" "run"
   assert_arg_pair "$claude_capture" "--dataset" "codepde@1.0"
   assert_arg_pair "$claude_capture" "--ae" "HARBOR_DATASET=codepde@1.0"
   assert_file_content \
@@ -538,6 +539,8 @@ main() {
     "claude-code" "$capture_bin" "$traceoff_capture" "$tmp/claude-traceoff" \
     "codepde@1.0" "" "false"
   assert_arg_pair "$traceoff_capture" "--dataset" "codepde@1.0"
+  assert_exact_arg_absent "$traceoff_capture" "harbor"
+  assert_arg_pair "$traceoff_capture" "run" "-y"
   assert_arg_pair "$traceoff_capture" "--ae" "CC_OPIK_ENABLE_HOOK=false"
   assert_file_content "${traceoff_capture}.opik-track-disable" "true"
   assert_file_content "${traceoff_capture}.opik-environment" "{}"
