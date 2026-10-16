@@ -3156,7 +3156,11 @@ class YiCloudOpenSandboxEnvironment(BaseEnvironment):
                     cwd="/", timeout_sec=300, user="root",
                 )
                 if result.return_code != 0:
-                    raise RuntimeError(f"failed to archive directory {source_dir!r}")
+                    raise RuntimeError(
+                        f"failed to archive directory {source_dir!r}: "
+                        f"return_code={result.return_code}; "
+                        f"{(result.stderr or result.stdout or 'no output')[-2000:]}"
+                    )
                 target = Path(target_dir)
                 target.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory() as tmp_dir:
