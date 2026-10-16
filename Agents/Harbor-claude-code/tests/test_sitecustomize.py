@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import tarfile
 import tempfile
 import types
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
@@ -241,7 +243,9 @@ class ClaudeInstallCommandTest(unittest.TestCase):
             async def install(self, environment):
                 await self.exec_as_root(
                     environment,
-                    "apt-get update && apt-get install -y curl procps",
+                    "if command -v apk >/dev/null; then "
+                    "apk add --no-cache curl bash nodejs npm procps; else "
+                    "apt-get update && apt-get install -y curl procps; fi",
                 )
                 return await self.exec_as_agent(
                     environment,
@@ -476,6 +480,7 @@ class ClaudeInstallCommandTest(unittest.TestCase):
                     **os.environ,
                     "HOME": str(home),
                     "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                    "PYTHONWARNINGS": "error",
                 },
             )
 
@@ -483,19 +488,101 @@ class ClaudeInstallCommandTest(unittest.TestCase):
             self.assertIn("Using S3 Node runtime: v22.23.2", result.stderr)
             self.assertFalse(apt_marker.exists(), result.stderr)
 
-    def test_node_dist_extraction_failure_can_reach_package_manager_fallback(self) -> None:
+    def test_node_archive_filters_support_legacy_python(self) -> None:
+        command = self._install_command({"CC_OPIK_ENABLE_HOOK": "false"})
+        snippets = re.findall(r"import sys, tarfile\n.*?(?=\nPY\n)", command, re.DOTALL)
+        self.assertEqual(len(snippets), 2)
+        for filtered in (True, False):
+            for snippet in snippets:
+                with self.subTest(filtered=filtered, snippet=snippet):
+                    extracted = []
+
+                    def modern_extract(path, *, filter, records=extracted):
+                        records.append((path, filter))
+
+                    def legacy_extract(path, records=extracted):
+                        records.append((path, None))
+
+                    fake_tarfile = types.ModuleType("tarfile")
+                    if filtered:
+                        fake_tarfile.data_filter = object()
+                    archive = types.SimpleNamespace(
+                        extractall=modern_extract if filtered else legacy_extract
+                    )
+                    fake_tarfile.open = lambda path, archive=archive: nullcontext(archive)
+                    with mock.patch.dict(sys.modules, {"tarfile": fake_tarfile}), mock.patch.object(
+                        sys, "argv", ["-", "archive.tar.xz", "destination"]
+                    ):
+                        exec(snippet, {})  # noqa: S102 - execute the trusted installer heredoc
+                    self.assertEqual(extracted, [("destination", "data" if filtered else None)])
+
+    def test_opensandbox_runtime_failures_do_not_install_system_node(self) -> None:
+        for failure in ("corrupt-cache", "missing", "invalid-node", "unsafe-link", "corrupt-download"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                home = root / "home"
+                home.mkdir()
+                wheels = root / "wheels"
+                wheels.mkdir()
+                binaries = root / "bin"
+                binaries.mkdir()
+                marker = root / "fallback-called"
+                for name in ("apt-get", "apk", "yum", "tar"):
+                    binary = binaries / name
+                    binary.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\nexit 97\n")
+                    binary.chmod(0o755)
+                for name in ("node", "npm"):
+                    binary = binaries / name
+                    # A usable system Node must not hide a corrupt configured archive.
+                    binary.write_text("#!/bin/sh\nexit " + ("0\n" if failure == "corrupt-cache" else "1\n"))
+                    binary.chmod(0o755)
+                system_node = (binaries / "node").read_bytes()
+                node_archive = wheels / "node-runtime.tar.xz"
+                extra_env = {
+                    "CC_OPIK_ENABLE_HOOK": "false",
+                    "CC_OPIK_PY_WHEEL_DIR": str(wheels),
+                    "CC_OPIK_CLAUDE_TGZ_PATH": str(root / "claude.tgz"),
+                }
+                if failure == "corrupt-cache":
+                    node_archive.write_bytes(b"not an archive")
+                elif failure == "corrupt-download":
+                    download = root / "node.tar.gz"
+                    download.write_bytes(b"not an archive")
+                    extra_env["CC_NODE_DIST_URL"] = download.as_uri()
+                elif failure == "invalid-node":
+                    with tarfile.open(node_archive, "w:xz") as archive:
+                        archive.add(binaries / "node", arcname="node-runtime/bin/node")
+                elif failure == "unsafe-link":
+                    with tarfile.open(node_archive, "w:xz") as archive:
+                        link = tarfile.TarInfo("node-runtime/bin/node")
+                        link.type = tarfile.SYMTYPE
+                        link.linkname = str(binaries / "node")
+                        archive.addfile(link)
+                command = self._install_command(extra_env, environment_type="opensandbox")
+                result = subprocess.run(
+                    ["bash", "-c", command], text=True, capture_output=True, timeout=15, check=False,
+                    env={**os.environ, "HOME": str(home), "PYTHONWARNINGS": "error",
+                         "PATH": f"{binaries}:{os.environ['PATH']}"},
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Refusing to install system Node/npm", result.stderr)
+                self.assertFalse(marker.exists(), result.stderr)
+                self.assertFalse((home / ".local/bin/claude").exists())
+                self.assertEqual((binaries / "node").read_bytes(), system_node)
+
+    def test_non_opensandbox_keeps_node_package_fallback(self) -> None:
         command = self._install_command(
             {
                 "CC_OPIK_ENABLE_HOOK": "false",
                 "CC_NODE_DIST_URL": "https://example.com/node.tar.gz",
             },
-            environment_type="opensandbox",
+            environment_type="docker",
         )
 
         guarded_extract = (
             'if python3 - <<\'PY\' "$node_dist_tgz" "$node_dir"'
         )
-        package_manager_fallback = "if node_runtime_required; then"
+        package_manager_fallback = "if ! command -v npm >/dev/null 2>&1; then"
         self.assertIn(guarded_extract, command)
         self.assertLess(
             command.index(guarded_extract),
@@ -511,14 +598,11 @@ class ClaudeInstallCommandTest(unittest.TestCase):
         )
         self.assertEqual(bash_check.returncode, 0, bash_check.stderr)
 
-    def test_opensandbox_preserves_non_node_system_prerequisites(self) -> None:
+    def test_opensandbox_preserves_non_node_prerequisites_without_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             claude_tgz = root / "claude-code.tgz"
-            claude_tgz.touch()
             wheel_dir = root / "wheels"
-            wheel_dir.mkdir()
-            (wheel_dir / "node-runtime.tar.xz").touch()
             self._install_command(
                 {
                     "CC_OPIK_ENABLE_HOOK": "false",
@@ -535,11 +619,7 @@ class ClaudeInstallCommandTest(unittest.TestCase):
                 check=False,
             )
 
-        self.assertIn(
-            f"[ -f {claude_tgz} ] && "
-            f"[ -f {wheel_dir}/node-runtime.tar.xz ]",
-            self.last_root_command,
-        )
+        self.assertNotIn("nodejs npm", self.last_root_command)
         self.assertIn("command -v bash", self.last_root_command)
         self.assertIn("command -v ps", self.last_root_command)
         self.assertIn("command -v pgrep", self.last_root_command)
