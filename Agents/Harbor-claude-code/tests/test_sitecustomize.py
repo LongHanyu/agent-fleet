@@ -417,6 +417,12 @@ class ClaudeInstallCommandTest(unittest.TestCase):
                     self.assertTrue(backups[0].is_symlink())
 
     def test_s3_node_runtime_does_not_reenter_package_manager_fallback(self) -> None:
+        self._assert_isolated_node_install(corrupt_cache=False)
+
+    def test_corrupt_node_cache_uses_configured_dist_before_failing(self) -> None:
+        self._assert_isolated_node_install(corrupt_cache=True)
+
+    def _assert_isolated_node_install(self, *, corrupt_cache: bool) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runtime_bin = root / "node-v22.23.2-linux-x64" / "bin"
@@ -452,14 +458,17 @@ class ClaudeInstallCommandTest(unittest.TestCase):
 
             claude_tgz = root / "claude-code.tgz"
             claude_tgz.write_bytes(b"test fixture")
-            command = self._install_command(
-                {
-                    "CC_OPIK_ENABLE_HOOK": "false",
-                    "CC_OPIK_CLAUDE_TGZ_PATH": str(claude_tgz),
-                    "CC_OPIK_PY_WHEEL_DIR": str(wheel_dir),
-                },
-                environment_type="opensandbox",
-            )
+            extra_env = {
+                "CC_OPIK_ENABLE_HOOK": "false",
+                "CC_OPIK_CLAUDE_TGZ_PATH": str(claude_tgz),
+                "CC_OPIK_PY_WHEEL_DIR": str(wheel_dir),
+            }
+            if corrupt_cache:
+                dist = root / "node-dist.tar.xz"
+                node_archive.rename(dist)
+                node_archive.write_bytes(b"corrupt archive")
+                extra_env["CC_NODE_DIST_URL"] = dist.as_uri()
+            command = self._install_command(extra_env, environment_type="opensandbox")
 
             fake_bin = root / "fake-bin"
             fake_bin.mkdir()
@@ -469,6 +478,12 @@ class ClaudeInstallCommandTest(unittest.TestCase):
                 f"#!/bin/sh\ntouch {shlex.quote(str(apt_marker))}\nexit 97\n"
             )
             fake_apt.chmod(0o755)
+            if corrupt_cache:
+                # Even a usable system Node must not bypass the isolated fallback.
+                for name in ("node", "npm"):
+                    binary = fake_bin / name
+                    binary.write_text("#!/bin/sh\nexit 0\n")
+                    binary.chmod(0o755)
             home = root / "home"
             home.mkdir()
             result = subprocess.run(
@@ -485,7 +500,11 @@ class ClaudeInstallCommandTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("Using S3 Node runtime: v22.23.2", result.stderr)
+            self.assertIn("2.1.90", result.stdout)
+            if not corrupt_cache:
+                self.assertIn("Using S3 Node runtime: v22.23.2", result.stderr)
+            else:
+                self.assertEqual((fake_bin / "node").read_text(), "#!/bin/sh\nexit 0\n")
             self.assertFalse(apt_marker.exists(), result.stderr)
 
     def test_node_archive_filters_support_legacy_python(self) -> None:
