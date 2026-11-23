@@ -72,7 +72,7 @@ def build_result(
     request_file: Path,
     result_file: Path | None,
     console_log: str,
-    reward: str,
+    reward: str | None,
     exception_type: str,
     exit_code: int,
     result_out: Path,
@@ -100,7 +100,6 @@ def build_result(
         "environment_type": request.get("environment_type"),
         "trial_name": result_file.parent.name if result_file else "",
         "trial_uri": str(result_file.parent) if result_file else "",
-        "reward": float(reward) if reward.strip() not in {"", "None"} else None,
         "rollout_details": agent_result.get("rollout_details") if isinstance(agent_result, dict) else None,
         "num_turns": (agent_result.get("metadata") or {}).get("n_episodes") if isinstance(agent_result, dict) else None,
         "agent_result": agent_result,
@@ -116,6 +115,13 @@ def build_result(
             "exit_code": exit_code,
         },
     }
+    if request.get("result_format", "legacy") == "legacy":
+        # Existing clients consume a mirrored scalar. Other clients receive the
+        # original verifier result and select their metric at the caller.
+        if reward is None:
+            rewards = verifier_result.get("rewards") if isinstance(verifier_result, dict) else None
+            reward = str(rewards.get("reward", "")) if isinstance(rewards, dict) else ""
+        payload["reward"] = float(reward) if reward.strip() not in {"", "None"} else None
     temporary = result_out.with_name(f".{result_out.name}.{os.getpid()}.tmp")
     temporary.write_text(
         json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True),

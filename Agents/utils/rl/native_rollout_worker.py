@@ -92,7 +92,7 @@ async def serve(template: TrialConfig, root: Path, trials: Path, limit: int) -> 
         request = json.loads(path.read_text())
         output = results / path.name
         result_file = None
-        reward, error, code = "", "", 0
+        error, code = "", 0
         try:
             config = configure_trial(template, request, trials)
             LOG.info("start request=%s task=%s", request["request_id"], request["task_id"])
@@ -100,17 +100,15 @@ async def serve(template: TrialConfig, root: Path, trials: Path, limit: int) -> 
             result_file = trials / config.trial_name / "result.json"
             if not result_file.is_file():
                 raise RuntimeError("Harbor returned without persisting the trial result")
-            if result.verifier_result and result.verifier_result.rewards:
-                reward = str(result.verifier_result.rewards.get("reward", ""))
             if result.exception_info:
                 error = result.exception_info.exception_type
         except Exception as exc:
             LOG.exception("Native rollout request failed: %s", request["request_id"])
             error, code = type(exc).__name__, 1
         build_result(path, result_file, str(trials / request["request_file_id"] / "trial.log"),
-                     reward, error, code, output, "failed" if error else "completed")
+                     None, error, code, output, "failed" if error else "completed")
         path.unlink()
-        LOG.info("finish request=%s reward=%s exception=%s", request["request_id"], reward, error)
+        LOG.info("finish request=%s exception=%s", request["request_id"], error)
 
     tasks: set[asyncio.Task] = set()
     try:

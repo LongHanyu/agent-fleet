@@ -511,6 +511,9 @@ def resolve_task_path(request: dict[str, Any]) -> Path:
 def _enqueue_request(request: dict[str, Any]) -> tuple[str, Path]:
     _reject_e2b_credentials(request)
     _reject_model_credentials(request)
+    result_format = request.get("result_format", "legacy")
+    if result_format not in ("legacy", "verifier_result"):
+        raise ValueError("Unknown trial result_format")
     request_id = _validated_request_id(request.get("request_id"))
     request_file_id = _storage_id(request_id, prefix="request")
     session_id = request.get("session_id") or uuid4().hex
@@ -554,6 +557,8 @@ def _enqueue_request(request: dict[str, Any]) -> tuple[str, Path]:
         "zellij_session": zellij_session,
         "created_at": _now(),
     }
+    if result_format != "legacy":
+        payload["result_format"] = result_format
     payload.update(_worker_options(request))
     pending_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)

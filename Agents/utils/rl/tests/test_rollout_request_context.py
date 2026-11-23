@@ -72,6 +72,11 @@ class RolloutRequestContextTest(unittest.TestCase):
         request_id, result_path = MODULE._enqueue_request(full_request)
         return request_id, result_path, job_queue_root, ensure_zellij
 
+    def test_verifier_result_format_reaches_the_worker(self) -> None:
+        _, result_path, _, _ = self._enqueue_with_temp_context({"result_format": "verifier_result"})
+        pending = result_path.parent.parent / "pending" / result_path.name
+        self.assertEqual(json.loads(pending.read_text())["result_format"], "verifier_result")
+
     def test_invalid_json_bodies_return_bad_request(self) -> None:
         invalid_bodies = (
             (b"[1, 2, 3]", "TypeError"),

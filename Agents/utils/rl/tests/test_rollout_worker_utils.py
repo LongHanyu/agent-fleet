@@ -41,6 +41,23 @@ class RolloutWorkerUtilsTest(unittest.TestCase):
             },
         )
 
+    def test_structured_verifier_receipt_preserves_all_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            request, trial, output = (root / name for name in ("request", "trial", "out"))
+            verifier = {"rewards": {"passing_tests": 4, "total_tests": 7}}
+            trial.write_text(json.dumps({"verifier_result": verifier}))
+            request.write_text(json.dumps({"result_format": "verifier_result"}))
+            MODULE.build_result(request, trial, "", None, "", 0, output, "completed")
+            result = json.loads(output.read_text())
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["verifier_result"], verifier)
+            self.assertNotIn("reward", result)
+            request.write_text("{}")
+            trial.write_text(json.dumps({"verifier_result": {"rewards": {"reward": 0}}}))
+            MODULE.build_result(request, trial, "", None, "", 0, output, "completed")
+            self.assertEqual(json.loads(output.read_text())["reward"], 0.0)
+
     def test_build_result_merges_harbor_result_atomically(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
